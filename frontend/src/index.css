@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+
+@import "tailwindcss";
+
+/* Enable class-based dark mode compiled styles for Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-yashada-navy: #3B1A66;
+  --color-yashada-navy-light: #5A2B99;
+  --color-yashada-gold: #9F5CD4;
+  --color-yashada-gold-light: #D6B5F7;
+  --color-yashada-sand: #F7F3FC;
+  --color-yashada-sand-dark: #EADDF7;
+  --color-yashada-accent: #8644C2;
+
+  --font-serif: 'Playfair Display', serif;
+  --font-sans: 'Inter', sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800 font-sans antialiased selection:bg-yashada-gold/30 selection:text-slate-900 transition-colors duration-300;
+}
+
+body.dark {
+  @apply bg-[#0B0616] text-slate-200;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply font-serif tracking-tight text-yashada-navy dark:text-white;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100 dark:bg-slate-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-700 rounded-full hover:bg-slate-400 dark:hover:bg-slate-600;
+}
+
+/* Glassmorphism utility */
+.glass-card {
+  @apply bg-white/70 dark:bg-[#08182d]/70 backdrop-blur-md border border-slate-200/50 dark:border-slate-800/50;
+}
+
+/* Rubric Pastel Theme Grids */
+.rubric-lvl-1 {
+  @apply bg-red-50/50 dark:bg-red-950/20 text-red-900 dark:text-red-300 border-red-200/50 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all cursor-pointer;
+}
+.rubric-lvl-1.selected {
+  @apply bg-red-100 dark:bg-red-950/40 text-red-950 dark:text-red-200 border-red-400 dark:border-red-800 font-medium shadow-sm shadow-red-100 dark:shadow-none;
+}
+
+.rubric-lvl-2 {
+  @apply bg-amber-50/50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-300 border-amber-200/50 dark:border-amber-900/30 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all cursor-pointer;
+}
+.rubric-lvl-2.selected {
+  @apply bg-amber-100 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 border-amber-400 dark:border-amber-800 font-medium shadow-sm shadow-amber-100 dark:shadow-none;
+}
+
+.rubric-lvl-3 {
+  @apply bg-blue-50/50 dark:bg-blue-950/20 text-blue-900 dark:text-blue-300 border-blue-200/50 dark:border-blue-900/30 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-all cursor-pointer;
+}
+.rubric-lvl-3.selected {
+  @apply bg-blue-100 dark:bg-blue-950/40 text-blue-950 dark:text-blue-200 border-blue-400 dark:border-blue-800 font-medium shadow-sm shadow-blue-100 dark:shadow-none;
+}
+
+.rubric-lvl-4 {
+  @apply bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-300 border-emerald-200/50 dark:border-emerald-900/30 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all cursor-pointer;
+}
+.rubric-lvl-4.selected {
+  @apply bg-emerald-100 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 border-emerald-400 dark:border-emerald-800 font-medium shadow-sm shadow-emerald-100 dark:shadow-none;
+}
