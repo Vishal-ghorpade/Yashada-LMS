@@ -20,8 +20,12 @@ const app = express();
 
 // Middlewares
 app.use(express.json());
-app.use(cors());
-
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    process.env.FRONTEND_URL
+  ]
+}));
 // Serve static uploads
 app.use('/uploads', express.static(path.join(process.cwd(), 'public/uploads')));
 
