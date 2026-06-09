@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import ActivityLog from '../models/ActivityLog.js';
+import Enrollment from '../models/Enrollment.js';
+import QuizResponse from '../models/QuizResponse.js';
+import FeedbackResponse from '../models/FeedbackResponse.js';
 import { logActivity } from '../utils/activityLogger.js';
 
 // Generate JWT token
@@ -15,7 +18,7 @@ const generateToken = (id) => {
 // @access  Public
 export const registerUser = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, branch, rollNumber } = req.body;
 
     if (!name || !email || !password) {
       res.status(400);
@@ -37,7 +40,9 @@ export const registerUser = async (req, res, next) => {
       name,
       email,
       password,
-      role: assignedRole
+      role: assignedRole,
+      branch: branch || '',
+      rollNumber: rollNumber || ''
     });
 
     const token = generateToken(user._id);
@@ -52,14 +57,24 @@ export const registerUser = async (req, res, next) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges
       },
       // Backward compatibility for existing front-end
       admin: {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges
       }
     });
   } catch (error) {
@@ -80,7 +95,7 @@ export const loginAdmin = async (req, res, next) => {
     }
 
     // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email }).select('+password').populate('department');
 
     if (!user) {
       res.status(401);
@@ -107,14 +122,40 @@ export const loginAdmin = async (req, res, next) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges,
+        profileCollected: user.profileCollected,
+        designation: user.designation,
+        yearsOfExperience: user.yearsOfExperience,
+        learningPreference: user.learningPreference,
+        monthlyLearningAvailability: user.monthlyLearningAvailability,
+        competencyAreas: user.competencyAreas,
+        learningHours: user.learningHours,
+        department: user.department
       },
       // Backward compatibility for existing front-end
       admin: {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges,
+        profileCollected: user.profileCollected,
+        designation: user.designation,
+        yearsOfExperience: user.yearsOfExperience,
+        learningPreference: user.learningPreference,
+        monthlyLearningAvailability: user.monthlyLearningAvailability,
+        competencyAreas: user.competencyAreas,
+        learningHours: user.learningHours,
+        department: user.department
       }
     });
   } catch (error) {
@@ -127,7 +168,7 @@ export const loginAdmin = async (req, res, next) => {
 // @access  Private
 export const getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).populate('department');
     
     res.status(200).json({
       success: true,
@@ -135,14 +176,40 @@ export const getMe = async (req, res, next) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges,
+        profileCollected: user.profileCollected,
+        designation: user.designation,
+        yearsOfExperience: user.yearsOfExperience,
+        learningPreference: user.learningPreference,
+        monthlyLearningAvailability: user.monthlyLearningAvailability,
+        competencyAreas: user.competencyAreas,
+        learningHours: user.learningHours,
+        department: user.department
       },
       // Backward compatibility for existing front-end
       admin: {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges,
+        profileCollected: user.profileCollected,
+        designation: user.designation,
+        yearsOfExperience: user.yearsOfExperience,
+        learningPreference: user.learningPreference,
+        monthlyLearningAvailability: user.monthlyLearningAvailability,
+        competencyAreas: user.competencyAreas,
+        learningHours: user.learningHours,
+        department: user.department
       }
     });
   } catch (error) {
@@ -167,3 +234,140 @@ export const getActivityLogs = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Get user profile aggregated dashboard
+// @route   GET /api/auth/profile
+// @access  Private
+export const getProfileDashboard = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id).populate('department');
+    if (!user) {
+      res.status(404);
+      throw new Error('User not found');
+    }
+
+    // 1. Fetch enrollments with course details
+    const enrollments = await Enrollment.find({ user: user._id })
+      .populate({
+        path: 'course',
+        select: 'title description category thumbnailUrl modules finalAssessment'
+      })
+      .sort('-updatedAt');
+
+    // 2. Fetch recent quiz responses
+    const quizResponses = await QuizResponse.find({ user: user._id })
+      .populate('quizId', 'title category')
+      .sort('-createdAt')
+      .limit(10);
+
+    // 3. Fetch feedback responses
+    const feedbackResponses = await FeedbackResponse.find({ user: user._id })
+      .populate('rubricId', 'title description')
+      .sort('-createdAt')
+      .limit(10);
+
+    res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        branch: user.branch,
+        rollNumber: user.rollNumber,
+        xp: user.xp,
+        streak: user.streak,
+        badges: user.badges,
+        profileCollected: user.profileCollected,
+        designation: user.designation,
+        yearsOfExperience: user.yearsOfExperience,
+        learningPreference: user.learningPreference,
+        monthlyLearningAvailability: user.monthlyLearningAvailability,
+        competencyAreas: user.competencyAreas,
+        learningHours: user.learningHours,
+        department: user.department
+      },
+      enrollments,
+      quizResponses,
+      feedbackResponses
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update user capacity building profile
+// @route   PUT /api/auth/profile
+// @access  Private
+export const updateProfile = async (req, res, next) => {
+  try {
+    const { 
+      department, 
+      designation, 
+      yearsOfExperience, 
+      learningPreference, 
+      monthlyLearningAvailability, 
+      competencyAreas 
+    } = req.body;
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      res.status(404);
+      throw new Error('User not found');
+    }
+
+    if (department) user.department = department;
+    if (designation) user.designation = designation;
+    if (yearsOfExperience !== undefined) user.yearsOfExperience = yearsOfExperience;
+    if (learningPreference) user.learningPreference = learningPreference;
+    if (monthlyLearningAvailability) user.monthlyLearningAvailability = monthlyLearningAvailability;
+    if (competencyAreas) user.competencyAreas = competencyAreas;
+    
+    user.profileCollected = true;
+
+    await user.save();
+    
+    const populatedUser = await User.findById(user._id).populate('department');
+
+    res.status(200).json({
+      success: true,
+      user: {
+        id: populatedUser._id,
+        name: populatedUser.name,
+        email: populatedUser.email,
+        role: populatedUser.role,
+        branch: populatedUser.branch,
+        rollNumber: populatedUser.rollNumber,
+        xp: populatedUser.xp,
+        streak: populatedUser.streak,
+        badges: populatedUser.badges,
+        profileCollected: populatedUser.profileCollected,
+        designation: populatedUser.designation,
+        yearsOfExperience: populatedUser.yearsOfExperience,
+        learningPreference: populatedUser.learningPreference,
+        monthlyLearningAvailability: populatedUser.monthlyLearningAvailability,
+        competencyAreas: populatedUser.competencyAreas,
+        learningHours: populatedUser.learningHours,
+        department: populatedUser.department
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get all registered users
+// @route   GET /api/auth/users
+// @access  Private/Admin
+export const getUsers = async (req, res, next) => {
+  try {
+    const users = await User.find().populate('department').sort('name');
+    res.status(200).json({
+      success: true,
+      users
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

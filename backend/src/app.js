@@ -8,6 +8,9 @@ import authRoutes from './routes/authRoutes.js';
 import rubricRoutes from './routes/rubricRoutes.js';
 import quizRoutes from './routes/quizRoutes.js';
 import videoRoutes from './routes/videoRoutes.js';
+import courseRoutes from './routes/courseRoutes.js';
+import departmentRoutes from './routes/departmentRoutes.js';
+import calendarRoutes from './routes/calendarRoutes.js';
 import { errorHandler } from './middleware/error.js';
 
 // Load environment variables
@@ -38,6 +41,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/rubrics', rubricRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/courses', courseRoutes);
+app.use('/api/departments', departmentRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 // Root route
 app.get('/', (req, res) => {

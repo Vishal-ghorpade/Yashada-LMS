@@ -1,11 +1,26 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Sun, Moon, LogOut, LayoutDashboard } from 'lucide-react';
+import { Sun, Moon, LogOut, LayoutDashboard, Sparkles, Flame } from 'lucide-react';
 
 const Navbar = ({ theme, setTheme, adminToken, adminUser, handleLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const currentPath = location.pathname;
+
+  const [currentUser, setCurrentUser] = useState(adminUser);
+
+  useEffect(() => {
+    const info = localStorage.getItem('yashada_admin_info');
+    if (info) {
+      try {
+        setCurrentUser(JSON.parse(info));
+      } catch (e) {
+        setCurrentUser(adminUser);
+      }
+    } else {
+      setCurrentUser(null);
+    }
+  }, [location, adminUser]);
 
   // Sync HTML class list with theme changes
   useEffect(() => {
@@ -59,7 +74,7 @@ const Navbar = ({ theme, setTheme, adminToken, adminUser, handleLogout }) => {
 
             {adminToken ? (
               <>
-                {(adminUser?.role === 'admin' || adminUser?.role === 'teacher') && (
+                {(currentUser?.role === 'admin' || currentUser?.role === 'teacher') && (
                   <button
                     onClick={() => navigate('/admin')}
                     className={`flex items-center space-x-1 text-sm font-medium transition-colors cursor-pointer ${
@@ -72,10 +87,34 @@ const Navbar = ({ theme, setTheme, adminToken, adminUser, handleLogout }) => {
                     <span className="hidden md:inline">Dashboard</span>
                   </button>
                 )}
-                {adminUser?.role === 'student' && (
-                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium font-sans">
-                    Welcome, <span className="text-slate-900 dark:text-white font-bold">{adminUser.name}</span>
-                  </span>
+                {currentUser?.role === 'student' && (
+                  <>
+                    <button
+                      onClick={() => navigate('/dashboard')}
+                      className={`flex items-center space-x-1 text-sm font-medium transition-colors cursor-pointer ${
+                        currentPath === '/dashboard' 
+                          ? 'text-yashada-gold font-semibold' 
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <LayoutDashboard className="h-4 w-4" />
+                      <span className="hidden md:inline">Dashboard</span>
+                    </button>
+                    <div className="hidden sm:flex items-center space-x-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800/80 rounded-xl px-2.5 py-1 text-xs">
+                      <span className="flex items-center gap-1 font-bold text-yashada-gold" title="Total XP">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>{currentUser.xp || 0} XP</span>
+                      </span>
+                      <span className="text-slate-300 dark:text-slate-700">|</span>
+                      <span className="flex items-center gap-1 font-bold text-orange-500" title="Learning Streak">
+                        <Flame className="h-3.5 w-3.5 fill-orange-500 text-orange-500" />
+                        <span>{currentUser.streak || 0} Days</span>
+                      </span>
+                    </div>
+                    <span className="hidden lg:inline text-xs text-slate-500 dark:text-slate-400 font-medium font-sans">
+                      Welcome, <span className="text-slate-900 dark:text-white font-bold">{currentUser.name}</span>
+                    </span>
+                  </>
                 )}
                 <button
                   onClick={handleLogout}

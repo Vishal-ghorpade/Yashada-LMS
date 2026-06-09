@@ -11,6 +11,9 @@ import LeaderboardPage from './pages/LeaderboardPage';
 import AdminDashboard from './pages/AdminDashboard';
 import VideoPlayerPage from './pages/VideoPlayerPage';
 import VideoEmbedPage from './pages/VideoEmbedPage';
+import StudentDashboard from './pages/StudentDashboard';
+import CourseDetailsPage from './pages/CourseDetailsPage';
+import CalendarPage from './pages/CalendarPage';
 import { AnimatePresence } from 'framer-motion';
 
 function AppContent({ 
@@ -55,17 +58,45 @@ function AppContent({
           
           <Route path="/embed/:videoId" element={<VideoEmbedPage />} />
           
+          <Route path="/dashboard" element={
+            adminToken && adminUser ? (
+              <StudentDashboard onShowToast={showToast} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+
+          <Route path="/calendar" element={
+            adminToken && adminUser ? (
+              <CalendarPage onShowToast={showToast} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+          
+          <Route path="/courses/:courseId" element={
+            adminToken && adminUser ? (
+              <CourseDetailsPage onShowToast={showToast} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } />
+          
           <Route path="/admin" element={
             adminToken && adminUser && (adminUser.role === 'admin' || adminUser.role === 'teacher') ? (
               <AdminDashboard admin={adminUser} onShowToast={showToast} />
             ) : (
-              <Navigate to={adminUser?.role === 'student' ? '/' : '/login'} replace />
+              <Navigate to={adminUser?.role === 'student' ? '/dashboard' : '/login'} replace />
             )
           } />
           
           <Route path="/login" element={
             adminToken && adminUser ? (
-              <Navigate to="/admin" replace />
+              adminUser.role === 'student' ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <Navigate to="/admin" replace />
+              )
             ) : (
               <Login onLoginSuccess={handleLoginSuccess} onShowToast={showToast} />
             )
@@ -106,6 +137,16 @@ function App() {
   useEffect(() => {
     localStorage.setItem('yashada_theme', theme);
   }, [theme]);
+
+  // Handle global 401 unauthorized logout events
+  useEffect(() => {
+    const handleGlobalLogout = () => {
+      setAdminToken(null);
+      setAdminUser(null);
+    };
+    window.addEventListener('yashada_logout', handleGlobalLogout);
+    return () => window.removeEventListener('yashada_logout', handleGlobalLogout);
+  }, []);
 
   const handleLoginSuccess = (token, adminInfo) => {
     localStorage.setItem('yashada_admin_token', token);

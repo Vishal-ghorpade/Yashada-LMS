@@ -17,6 +17,12 @@ export const fetchAPI = async (endpoint, options = {}) => {
     headers,
   });
 
+  if (response.status === 401) {
+    localStorage.removeItem('yashada_admin_token');
+    localStorage.removeItem('yashada_admin_info');
+    window.dispatchEvent(new Event('yashada_logout'));
+  }
+
   const data = await response.json();
 
   if (!response.ok) {

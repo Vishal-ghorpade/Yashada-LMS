@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Eye, Link2, Trash2, Edit3, Award, Play, BarChart2, 
   Settings, Clock, HelpCircle, Save, Trash, X, ArrowLeft, 
-  Upload, CheckCircle, RefreshCw, Download
+  Upload, CheckCircle, RefreshCw, Download, Sparkles
 } from 'lucide-react';
 import { fetchAPI } from '../utils/api';
 import { LoadingSpinner, SkeletonRow } from './Loader';
@@ -27,8 +27,27 @@ const VideosManager = ({ admin, onShowToast }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [videoFile, setVideoFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  // AI Quiz Mock State
+  const [transcriptInput, setTranscriptInput] = useState('');
+  const [showAIModal, setShowAIModal] = useState(false);
+
+  // Time conversion helpers
+  const secondsToMMSS = (sec) => {
+    if (isNaN(sec)) return '00:00';
+    const mins = Math.floor(sec / 60);
+    const secs = Math.floor(sec % 60);
+    return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const MMSSToSeconds = (mmss) => {
+    if (!mmss || !mmss.includes(':')) return 0;
+    const parts = mmss.split(':');
+    return (parseInt(parts[0], 10) || 0) * 60 + (parseFloat(parts[1]) || 0);
+  };
 
   // Load video catalog
   const loadVideos = async () => {
@@ -52,7 +71,10 @@ const VideosManager = ({ admin, onShowToast }) => {
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
-      setVideoFile(e.target.files[0]);
+      const file = e.target.files[0];
+      setVideoFile(file);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(file));
     }
   };
 
@@ -334,6 +356,114 @@ const VideosManager = ({ admin, onShowToast }) => {
     });
   };
 
+  const handleCSVImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const rows = text.split('\n').map(row => row.split(','));
+        const imported = [];
+
+        // Headers: Question,Option A,Option B,Option C,Option D,Correct Answer,Timestamp
+        for (let i = 1; i < rows.length; i++) {
+          const cols = rows[i].map(col => col.trim().replace(/^"|"$/g, ''));
+          if (cols.length < 2 || !cols[0]) continue;
+
+          const questionText = cols[0];
+          const opts = [cols[1], cols[2], cols[3], cols[4]].filter(Boolean);
+          const correctAnsChar = cols[5] || 'A';
+          const correctIdx = ['A', 'B', 'C', 'D'].indexOf(correctAnsChar.toUpperCase());
+          const tsVal = cols[6] || '00:00';
+          const timestamp = tsVal.includes(':') ? MMSSToSeconds(tsVal) : Number(tsVal) || 0;
+
+          imported.push({
+            timestamp,
+            questionType: opts.length === 2 && (opts[0] === 'True' || opts[0] === 'False') ? 'TrueFalse' : 'MCQ',
+            questionText,
+            options: opts,
+            correctAnswerIndex: correctIdx >= 0 ? correctIdx : 0,
+            explanation: 'Imported from syllabus spreadsheet.',
+            pauseVideo: true,
+            preventSkip: true
+          });
+        }
+
+        if (imported.length > 0) {
+          setEditorInteractions(prev => [...prev, ...imported]);
+          onShowToast(`Successfully imported ${imported.length} questions from CSV!`, 'success');
+        } else {
+          onShowToast('No valid question rows found in CSV.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        onShowToast('Error parsing CSV file.', 'error');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset file input
+  };
+
+  const handleAIGenerate = (e) => {
+    e.preventDefault();
+    if (!transcriptInput.trim()) return;
+
+    const generated = [];
+    const textLower = transcriptInput.toLowerCase();
+
+    if (textLower.includes('temperature') || textLower.includes('randomness')) {
+      generated.push({
+        timestamp: 45,
+        questionType: 'MCQ',
+        questionText: 'What LLM setting controls output creativity and randomness?',
+        options: ['Presence Penalty', 'Temperature', 'Frequency Penalty', 'Top-P Settings'],
+        correctAnswerIndex: 1,
+        explanation: 'AI-generated based on transcript match for "temperature".',
+        pauseVideo: true,
+        preventSkip: true
+      });
+    }
+
+    if (textLower.includes('rag') || textLower.includes('retrieval')) {
+      generated.push({
+        timestamp: 180,
+        questionType: 'MCQ',
+        questionText: 'What architecture lets models query external document content directly?',
+        options: ['Fine-Tuning', 'Retrieval-Augmented Generation (RAG)', 'Few-Shot engineering', 'Reinforcement learning'],
+        correctAnswerIndex: 1,
+        explanation: 'AI-generated based on transcript match for "RAG".',
+        pauseVideo: true,
+        preventSkip: true
+      });
+    }
+
+    if (generated.length === 0) {
+      generated.push({
+        timestamp: 60,
+        questionType: 'Reflection',
+        questionText: 'Reflect on how LLM configurations affect academic workflows.',
+        options: [],
+        pauseVideo: true,
+        preventSkip: false
+      });
+      generated.push({
+        timestamp: 120,
+        questionType: 'Poll',
+        questionText: 'How confident do you feel with prompt configurations?',
+        options: ['Excellent', 'Good', 'Need practice', 'Confused'],
+        pauseVideo: true,
+        preventSkip: false
+      });
+    }
+
+    setEditorInteractions(prev => [...prev, ...generated]);
+    setShowAIModal(false);
+    setTranscriptInput('');
+    onShowToast(`AI generated ${generated.length} question overlays from transcript!`, 'success');
+  };
+
   const handleSaveInteractions = async () => {
     // Basic verification
     const invalid = editorInteractions.find(q => !q.questionText || q.options.some(o => !o));
@@ -390,20 +520,43 @@ const VideosManager = ({ admin, onShowToast }) => {
           <p className="text-xs text-slate-400">
             Define MCQ, True/False, or Fill-in-the-Blank triggers at specific timestamps.
           </p>
-          <div className="flex space-x-3">
+          <div className="flex space-x-3 items-center">
+            <input 
+              type="file" 
+              id="csv-import-input" 
+              accept=".csv" 
+              onChange={handleCSVImport} 
+              className="hidden" 
+            />
+            <button
+              type="button"
+              onClick={() => document.getElementById('csv-import-input').click()}
+              className="px-4 py-2 bg-purple-650 text-white font-bold text-xs rounded-xl hover:opacity-90 flex items-center space-x-1 cursor-pointer"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Import CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAIModal(true)}
+              className="px-4 py-2 bg-indigo-650 text-white font-bold text-xs rounded-xl hover:opacity-90 flex items-center space-x-1 cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-yashada-gold fill-yashada-gold" />
+              <span>AI Generate</span>
+            </button>
             <button
               onClick={handleAddInteraction}
               className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl hover:opacity-90 flex items-center space-x-1 cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>Add Question Trigger</span>
+              <span>Add Trigger</span>
             </button>
             <button
               onClick={handleSaveInteractions}
               className="px-4 py-2 bg-yashada-gold text-yashada-navy font-bold text-xs rounded-xl shadow-md hover:opacity-90 flex items-center space-x-1 cursor-pointer"
             >
               <Save className="h-4 w-4" />
-              <span>Save Configurations</span>
+              <span>Save Configs</span>
             </button>
           </div>
         </div>
@@ -412,7 +565,7 @@ const VideosManager = ({ admin, onShowToast }) => {
           {editorInteractions.length === 0 ? (
             <div className="text-center py-16 bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl text-slate-450 text-xs space-y-3">
               <HelpCircle className="h-10 w-10 text-yashada-gold mx-auto" />
-              <p>No interactive questions placed yet. Click "Add Question Trigger" to start.</p>
+              <p>No interactive questions placed yet. Click "Add Trigger" to start.</p>
             </div>
           ) : (
             editorInteractions.map((q, idx) => (
@@ -432,13 +585,12 @@ const VideosManager = ({ admin, onShowToast }) => {
                 {/* Configuration header */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-400">Timestamp Trigger (seconds) *</label>
+                    <label className="text-xs font-semibold text-slate-400">Timestamp (MM:SS) *</label>
                     <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={q.timestamp}
-                      onChange={(e) => handleInteractionFieldChange(idx, 'timestamp', Number(e.target.value))}
+                      type="text"
+                      value={secondsToMMSS(q.timestamp)}
+                      onChange={(e) => handleInteractionFieldChange(idx, 'timestamp', MMSSToSeconds(e.target.value))}
+                      placeholder="02:30"
                       className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none focus:border-yashada-gold text-slate-800 dark:text-white"
                       required
                     />
@@ -450,7 +602,14 @@ const VideosManager = ({ admin, onShowToast }) => {
                       value={q.questionType}
                       onChange={(e) => {
                         const val = e.target.value;
-                        const defaultOpts = val === 'TrueFalse' ? ['True', 'False'] : ['', ''];
+                        let defaultOpts = ['', ''];
+                        if (val === 'TrueFalse') {
+                          defaultOpts = ['True', 'False'];
+                        } else if (val === 'Reflection') {
+                          defaultOpts = [];
+                        } else if (val === 'Poll') {
+                          defaultOpts = ['', '', '', ''];
+                        }
                         handleInteractionFieldChange(idx, 'questionType', val);
                         handleInteractionFieldChange(idx, 'options', defaultOpts);
                         handleInteractionFieldChange(idx, 'correctAnswerIndex', 0);
@@ -459,6 +618,8 @@ const VideosManager = ({ admin, onShowToast }) => {
                     >
                       <option value="MCQ">Multiple Choice (MCQ)</option>
                       <option value="TrueFalse">True / False</option>
+                      <option value="Reflection">Reflection Prompt</option>
+                      <option value="Poll">Feedback Poll</option>
                     </select>
                   </div>
 
@@ -498,67 +659,75 @@ const VideosManager = ({ admin, onShowToast }) => {
                 </div>
 
                 {/* Options and choices builder */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Answer Choices</label>
-                      {q.questionType === 'MCQ' && (
-                        <button
-                          type="button"
-                          onClick={() => handleAddOption(idx)}
-                          className="text-[10px] font-bold text-yashada-gold hover:underline"
-                        >
-                          + Add Choice
-                        </button>
-                      )}
+                {q.questionType !== 'Reflection' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Answer Choices</label>
+                        {(q.questionType === 'MCQ' || q.questionType === 'Poll') && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddOption(idx)}
+                            className="text-[10px] font-bold text-yashada-gold hover:underline"
+                          >
+                            + Add Choice
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        {q.options.map((opt, oIdx) => (
+                          <div key={oIdx} className="flex items-center space-x-2">
+                            {q.questionType !== 'Poll' && (
+                              <input
+                                type="radio"
+                                name={`correct_${idx}`}
+                                checked={q.correctAnswerIndex === oIdx}
+                                onChange={() => handleInteractionFieldChange(idx, 'correctAnswerIndex', oIdx)}
+                                className="text-yashada-gold focus:ring-yashada-gold h-4 w-4"
+                                title="Set as correct answer"
+                              />
+                            )}
+                            <input
+                              type="text"
+                              value={opt}
+                              onChange={(e) => handleOptionChange(idx, oIdx, e.target.value)}
+                              disabled={q.questionType === 'TrueFalse'}
+                              placeholder={`Choice ${oIdx + 1}`}
+                              className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:outline-none text-slate-800 dark:text-white"
+                              required
+                            />
+                            {(q.questionType === 'MCQ' || q.questionType === 'Poll') && q.options.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOption(idx, oIdx)}
+                                className="text-slate-450 hover:text-red-500"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="space-y-2">
-                      {q.options.map((opt, oIdx) => (
-                        <div key={oIdx} className="flex items-center space-x-2">
-                          <input
-                            type="radio"
-                            name={`correct_${idx}`}
-                            checked={q.correctAnswerIndex === oIdx}
-                            onChange={() => handleInteractionFieldChange(idx, 'correctAnswerIndex', oIdx)}
-                            className="text-yashada-gold focus:ring-yashada-gold h-4 w-4"
-                            title="Set as correct answer"
-                          />
-                          <input
-                            type="text"
-                            value={opt}
-                            onChange={(e) => handleOptionChange(idx, oIdx, e.target.value)}
-                            disabled={q.questionType === 'TrueFalse'}
-                            placeholder={`Choice ${oIdx + 1}`}
-                            className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:outline-none text-slate-800 dark:text-white"
-                            required
-                          />
-                          {q.questionType === 'MCQ' && q.options.length > 2 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveOption(idx, oIdx)}
-                              className="text-slate-450 hover:text-red-500"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
+                    {/* Explanation feedback */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Solution Explanation</label>
+                      <textarea
+                        rows={4}
+                        value={q.explanation}
+                        onChange={(e) => handleInteractionFieldChange(idx, 'explanation', e.target.value)}
+                        placeholder="Explain the solution detail to students after they submit their answer..."
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none text-slate-800 dark:text-white leading-relaxed"
+                      ></textarea>
                     </div>
                   </div>
-
-                  {/* Explanation feedback */}
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Solution Explanation</label>
-                    <textarea
-                      rows={4}
-                      value={q.explanation}
-                      onChange={(e) => handleInteractionFieldChange(idx, 'explanation', e.target.value)}
-                      placeholder="Explain the solution detail to students after they submit their answer..."
-                      className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none text-slate-800 dark:text-white leading-relaxed"
-                    ></textarea>
+                ) : (
+                  <div className="p-4 bg-slate-900/40 border border-slate-850 rounded-xl text-slate-450 text-xs">
+                    Reflection Prompt: The video will automatically pause at this timestamp and prompt the user to write their thoughts or simply continue. No option selection is required.
                   </div>
-                </div>
+                )}
 
               </div>
             ))
@@ -881,6 +1050,21 @@ const VideosManager = ({ admin, onShowToast }) => {
                 </div>
               </div>
 
+              {/* Client-side Video Preview Card */}
+              {videoFile && previewUrl && (
+                <div className="space-y-2 bg-slate-900/50 p-3 border border-slate-800 rounded-2xl">
+                  <div className="flex justify-between items-center text-[9px] uppercase font-bold text-slate-450">
+                    <span>Selected Video Preview</span>
+                    <span>{(videoFile.size / (1024 * 1024)).toFixed(2)} MB</span>
+                  </div>
+                  <video 
+                    src={previewUrl} 
+                    controls 
+                    className="w-full aspect-video rounded-xl bg-black border border-slate-800" 
+                  />
+                </div>
+              )}
+
               {isUploading && (
                 <div className="space-y-2 pt-2">
                   <div className="flex justify-between items-center text-[10px] text-yashada-gold font-bold">
@@ -923,6 +1107,51 @@ const VideosManager = ({ admin, onShowToast }) => {
           onClose={() => setShareData(null)}
           onShowToast={onShowToast}
         />
+      )}
+
+      {/* AI TRANSCRIPT MODAL */}
+      {showAIModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[#140D24] border border-slate-800 rounded-3xl p-6 shadow-2xl relative space-y-5">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-base font-serif font-bold text-white flex items-center gap-1.5">
+                  <Sparkles className="h-5 w-5 text-yashada-gold fill-yashada-gold" />
+                  <span>AI Interactive Quiz Builder</span>
+                </h3>
+                <p className="text-[10px] text-slate-400">Generate question triggers from lesson transcript.</p>
+              </div>
+              <button
+                onClick={() => setShowAIModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAIGenerate} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Video Lesson Transcript</label>
+                <textarea
+                  rows={6}
+                  value={transcriptInput}
+                  onChange={(e) => setTranscriptInput(e.target.value)}
+                  placeholder="Paste video transcript here (e.g. mention 'temperature settings control randomness' or 'RAG retrieval architecture')..."
+                  className="w-full p-3 bg-slate-900 border border-slate-800 rounded-xl text-xs focus:outline-none focus:border-yashada-gold text-white leading-relaxed"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-yashada-gold text-yashada-navy font-bold rounded-xl text-xs shadow-lg hover:opacity-95 flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <Sparkles className="h-4 w-4 fill-yashada-navy" />
+                <span>Generate Question Overlays</span>
+              </button>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

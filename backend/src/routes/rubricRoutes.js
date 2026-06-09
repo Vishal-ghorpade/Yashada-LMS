@@ -24,7 +24,7 @@ router.route('/:id')
   .delete(protect, deleteRubric);
 
 router.post('/:id/submit', optionalProtect, submitRubricResponse);
-router.post('/:id/check-attempt', checkFeedbackAttempt);
+router.post('/:id/check-attempt', optionalProtect, checkFeedbackAttempt);
 router.get('/:id/responses', protect, getRubricResponses);
 router.get('/:id/analytics', protect, getRubricAnalytics);
 

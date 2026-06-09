@@ -25,6 +25,63 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['admin', 'teacher', 'student'],
     default: 'student'
+  },
+  branch: {
+    type: String,
+    default: ''
+  },
+  rollNumber: {
+    type: String,
+    default: ''
+  },
+  xp: {
+    type: Number,
+    default: 0
+  },
+  streak: {
+    type: Number,
+    default: 0
+  },
+  lastActiveDate: {
+    type: Date
+  },
+  badges: {
+    type: [String],
+    default: []
+  },
+  department: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Department'
+  },
+  profileCollected: {
+    type: Boolean,
+    default: false
+  },
+  designation: {
+    type: String,
+    default: ''
+  },
+  yearsOfExperience: {
+    type: Number,
+    default: 0
+  },
+  learningPreference: {
+    type: String,
+    enum: ['Video Learning', 'Reading', 'Interactive Learning', 'Mixed'],
+    default: 'Mixed'
+  },
+  monthlyLearningAvailability: {
+    type: String,
+    enum: ['2-5 Hours', '5-10 Hours', '10-15 Hours', '15+ Hours'],
+    default: '2-5 Hours'
+  },
+  competencyAreas: {
+    type: [String],
+    default: []
+  },
+  learningHours: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true

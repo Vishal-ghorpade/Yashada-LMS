@@ -25,6 +25,7 @@ const InteractivePlayer = ({
   const [maxWatchedTime, setMaxWatchedTime] = useState(savedProgress);
   const [activeQuestion, setActiveQuestion] = useState(null);
   const [selectedOption, setSelectedOption] = useState(null);
+  const [reflectionText, setReflectionText] = useState('');
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [answeredIds, setAnsweredIds] = useState(new Set());
   const [scoreInfo, setScoreInfo] = useState({ earned: 0, total: 0 });
@@ -83,6 +84,7 @@ const InteractivePlayer = ({
       setIsPlaying(false);
       setActiveQuestion(activeQuestionFound);
       setSelectedOption(null);
+      setReflectionText('');
       setHasSubmitted(false);
       setShowExplanation(false);
     }
@@ -165,19 +167,34 @@ const InteractivePlayer = ({
   };
 
   const handleQuestionSubmit = () => {
+    const qId = activeQuestion._id || activeQuestion.id;
+
+    if (activeQuestion.questionType === 'Reflection') {
+      if (!reflectionText.trim()) return;
+      setAnsweredIds(prev => new Set([...prev, qId]));
+      setHasSubmitted(true);
+      setShowExplanation(true);
+      if (onQuestionAnswered) {
+        onQuestionAnswered(qId, reflectionText, true);
+      }
+      return;
+    }
+
     if (selectedOption === null || hasSubmitted) return;
 
-    const isCorrect = selectedOption === activeQuestion.correctAnswerIndex;
+    const isPoll = activeQuestion.questionType === 'Poll';
+    const isCorrect = isPoll ? true : (selectedOption === activeQuestion.correctAnswerIndex);
     
     // Add to answered checklist
-    const qId = activeQuestion._id || activeQuestion.id;
     setAnsweredIds(prev => new Set([...prev, qId]));
 
-    // Update cumulative scores
-    setScoreInfo(prev => ({
-      earned: prev.earned + (isCorrect ? 1 : 0),
-      total: prev.total + 1
-    }));
+    // Update cumulative scores (polls do not count towards score)
+    if (!isPoll) {
+      setScoreInfo(prev => ({
+        earned: prev.earned + (isCorrect ? 1 : 0),
+        total: prev.total + 1
+      }));
+    }
 
     setHasSubmitted(true);
     setShowExplanation(true);
@@ -190,6 +207,7 @@ const InteractivePlayer = ({
   const handleQuestionContinue = () => {
     setActiveQuestion(null);
     setSelectedOption(null);
+    setReflectionText('');
     setHasSubmitted(false);
     setShowExplanation(false);
 
@@ -367,7 +385,7 @@ const InteractivePlayer = ({
                 </div>
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-yashada-gold uppercase tracking-widest font-sans">
-                    Interactive Question Point
+                    {activeQuestion.questionType === 'Reflection' ? 'Reflection Prompt' : activeQuestion.questionType === 'Poll' ? 'Feedback Poll' : 'Interactive Question Point'}
                   </span>
                   <h3 className="text-base font-serif font-bold text-white leading-relaxed">
                     {activeQuestion.questionText}
@@ -375,44 +393,67 @@ const InteractivePlayer = ({
                 </div>
               </div>
 
-              {/* Options Grid */}
-              <div className="space-y-2.5 font-sans">
-                {activeQuestion.options.map((opt, idx) => {
-                  const isSelected = selectedOption === idx;
-                  const isCorrectAnswer = idx === activeQuestion.correctAnswerIndex;
-                  
-                  let optionStyles = 'border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 text-slate-300';
-                  let statusIcon = null;
+              {/* Reflection / Options Grid */}
+              {activeQuestion.questionType === 'Reflection' ? (
+                <div className="space-y-2.5 font-sans">
+                  <textarea
+                    rows={4}
+                    value={reflectionText}
+                    onChange={(e) => setReflectionText(e.target.value)}
+                    disabled={hasSubmitted}
+                    placeholder="Type your reflection here..."
+                    className="w-full p-3.5 bg-slate-900/40 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-yashada-gold focus:ring-1 focus:ring-yashada-gold placeholder-slate-500"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2.5 font-sans">
+                  {activeQuestion.options.map((opt, idx) => {
+                    const isSelected = selectedOption === idx;
+                    const isCorrectAnswer = idx === activeQuestion.correctAnswerIndex;
+                    const isPoll = activeQuestion.questionType === 'Poll';
+                    
+                    let optionStyles = 'border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 text-slate-300';
+                    let statusIcon = null;
 
-                  if (isSelected && !hasSubmitted) {
-                    optionStyles = 'border-yashada-gold bg-yashada-gold/10 text-white';
-                  } else if (hasSubmitted) {
-                    if (isCorrectAnswer) {
-                      optionStyles = 'border-emerald-500 bg-emerald-500/10 text-white';
-                      statusIcon = <Check className="h-4 w-4 text-emerald-500" />;
-                    } else if (isSelected) {
-                      optionStyles = 'border-rose-500 bg-rose-500/10 text-white';
-                      statusIcon = <X className="h-4 w-4 text-rose-500" />;
-                    } else {
-                      optionStyles = 'border-slate-800 bg-slate-900/20 text-slate-500 opacity-60';
+                    if (isSelected && !hasSubmitted) {
+                      optionStyles = 'border-yashada-gold bg-yashada-gold/10 text-white';
+                    } else if (hasSubmitted) {
+                      if (isPoll) {
+                        if (isSelected) {
+                          optionStyles = 'border-yashada-gold bg-yashada-gold/15 text-white';
+                          statusIcon = <Check className="h-4 w-4 text-yashada-gold" />;
+                        } else {
+                          optionStyles = 'border-slate-850 bg-slate-900/10 text-slate-500 opacity-60';
+                        }
+                      } else {
+                        if (isCorrectAnswer) {
+                          optionStyles = 'border-emerald-500 bg-emerald-500/10 text-white';
+                          statusIcon = <Check className="h-4 w-4 text-emerald-500" />;
+                        } else if (isSelected) {
+                          optionStyles = 'border-rose-500 bg-rose-500/10 text-white';
+                          statusIcon = <X className="h-4 w-4 text-rose-500" />;
+                        } else {
+                          optionStyles = 'border-slate-800 bg-slate-900/20 text-slate-500 opacity-60';
+                        }
+                      }
                     }
-                  }
 
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => handleOptionSelect(idx)}
-                      disabled={hasSubmitted}
-                      className={`w-full text-left p-3.5 border rounded-xl flex items-center justify-between text-xs font-semibold transition-all ${optionStyles} ${
-                        !hasSubmitted ? 'cursor-pointer hover:border-slate-700' : 'cursor-default'
-                      }`}
-                    >
-                      <span className="flex-1 pr-4">{opt}</span>
-                      {statusIcon}
-                    </button>
-                  );
-                })}
-              </div>
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => handleOptionSelect(idx)}
+                        disabled={hasSubmitted}
+                        className={`w-full text-left p-3.5 border rounded-xl flex items-center justify-between text-xs font-semibold transition-all ${optionStyles} ${
+                          !hasSubmitted ? 'cursor-pointer hover:border-slate-700' : 'cursor-default'
+                        }`}
+                      >
+                        <span className="flex-1 pr-4">{opt}</span>
+                        {statusIcon}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Explanations & Verification Info */}
               <AnimatePresence>
@@ -437,7 +478,7 @@ const InteractivePlayer = ({
                 {!hasSubmitted ? (
                   <button
                     onClick={handleQuestionSubmit}
-                    disabled={selectedOption === null}
+                    disabled={activeQuestion.questionType === 'Reflection' ? !reflectionText.trim() : selectedOption === null}
                     className="px-6 py-2.5 bg-yashada-gold text-yashada-navy font-bold rounded-xl text-xs hover:opacity-90 transition-opacity flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-sans"
                   >
                     <span>Submit Answer</span>

@@ -332,14 +332,21 @@ export const getQuizLeaderboard = async (req, res, next) => {
 export const checkQuizAttempt = async (req, res, next) => {
   try {
     const { rollNumber } = req.body;
-    if (!rollNumber) {
+    let existing = null;
+
+    if (req.user) {
+      existing = await QuizResponse.findOne({ quizId: req.params.id, user: req.user._id });
+    } else if (rollNumber) {
+      existing = await QuizResponse.findOne({ quizId: req.params.id, rollNumber });
+    } else {
       res.status(400);
-      throw new Error('Roll number is required');
+      throw new Error('Roll number or authenticated session is required');
     }
-    const existing = await QuizResponse.findOne({ quizId: req.params.id, rollNumber });
+
     res.status(200).json({
       success: true,
-      exists: !!existing
+      exists: !!existing,
+      attempt: existing
     });
   } catch (error) {
     next(error);

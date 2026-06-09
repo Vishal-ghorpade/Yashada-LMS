@@ -40,6 +40,70 @@ const QuizPage = ({ onShowToast }) => {
         if (data.success) {
           setQuiz(data.quiz);
           setTimeLeft(data.quiz.timer * 60);
+
+          // SSO check if logged in
+          const userToken = localStorage.getItem('yashada_admin_token');
+          const userInfo = JSON.parse(localStorage.getItem('yashada_admin_info')) || null;
+          if (userToken && userInfo) {
+            setName(userInfo.name || '');
+            const userBranch = userInfo.department?.name || userInfo.branch || 'Trainee Officer';
+            setBranch(userBranch);
+            setRollNumber(userInfo.rollNumber || 'YSH-STUDENT');
+
+            try {
+              const attemptData = await fetchAPI(`/quizzes/${quizId}/check-attempt`, {
+                method: 'POST',
+                body: JSON.stringify({ rollNumber: userInfo.rollNumber || 'YSH-STUDENT' })
+              });
+
+              if (attemptData.success) {
+                if (attemptData.exists && attemptData.attempt) {
+                  // Pre-load previous attempt scorecard
+                  setAttemptResult(attemptData.attempt);
+                  setSubmitted(true);
+                  setEnrolled(true);
+                } else {
+                  // Bypass details entry screen, enroll immediately!
+                  setEnrolled(true);
+                  setExamActive(true);
+                }
+              }
+            } catch (attemptErr) {
+              console.error("Failed to check duplicate quiz attempt:", attemptErr);
+            }
+          } else {
+            // Guest cache check
+            const guestName = localStorage.getItem('yashada_guest_name');
+            const guestBranch = localStorage.getItem('yashada_guest_branch');
+            const guestRollNumber = localStorage.getItem('yashada_guest_rollNumber');
+
+            if (guestName && guestBranch && guestRollNumber) {
+              setName(guestName);
+              setBranch(guestBranch);
+              setRollNumber(guestRollNumber);
+
+              try {
+                const attemptData = await fetchAPI(`/quizzes/${quizId}/check-attempt`, {
+                  method: 'POST',
+                  body: JSON.stringify({ rollNumber: guestRollNumber })
+                });
+
+                if (attemptData.success) {
+                  if (attemptData.exists && attemptData.attempt) {
+                    setAttemptResult(attemptData.attempt);
+                    setSubmitted(true);
+                    setEnrolled(true);
+                  } else {
+                    // Bypass details entry screen, enroll immediately!
+                    setEnrolled(true);
+                    setExamActive(true);
+                  }
+                }
+              } catch (attemptErr) {
+                console.error("Failed to check duplicate guest quiz attempt:", attemptErr);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error(err);
@@ -96,6 +160,10 @@ const QuizPage = ({ onShowToast }) => {
         if (data.exists) {
           onShowToast('You have already attempted this examination (One attempt restricted).', 'error');
         } else {
+          // Store guest details
+          localStorage.setItem('yashada_guest_name', name);
+          localStorage.setItem('yashada_guest_branch', branch);
+          localStorage.setItem('yashada_guest_rollNumber', rollNumber);
           setEnrolled(true);
           setExamActive(true);
         }

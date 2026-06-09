@@ -3,8 +3,23 @@ import { useNavigate } from 'react-router-dom';
 import { Shield, ClipboardCheck, Award, ArrowRight, X, Sparkles, BookOpen, Play } from 'lucide-react';
 import { fetchAPI } from '../utils/api';
 import { motion, AnimatePresence } from 'framer-motion';
+import StudentDashboard from './StudentDashboard';
+import TeacherDashboard from './TeacherDashboard';
+import AdminDashboard from './AdminDashboard';
 
 const Landing = ({ onShowToast }) => {
+  const adminToken = localStorage.getItem('yashada_admin_token');
+  const adminUser = JSON.parse(localStorage.getItem('yashada_admin_info')) || null;
+
+  if (adminToken && adminUser) {
+    if (adminUser.role === 'admin') {
+      return <AdminDashboard admin={adminUser} onShowToast={onShowToast} />;
+    } else if (adminUser.role === 'teacher') {
+      return <TeacherDashboard teacher={adminUser} onShowToast={onShowToast} />;
+    } else {
+      return <StudentDashboard onShowToast={onShowToast} />;
+    }
+  }
   const navigate = useNavigate();
   const [quizzes, setQuizzes] = useState([]);
   const [rubrics, setRubrics] = useState([]);

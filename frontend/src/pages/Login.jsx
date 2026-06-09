@@ -46,7 +46,7 @@ const Login = ({ onLoginSuccess, onShowToast }) => {
         if (userInfo.role === 'admin' || userInfo.role === 'teacher') {
           navigate('/admin');
         } else {
-          navigate('/'); // Redirect students to the landing catalog
+          navigate('/dashboard'); // Redirect students to the student dashboard
         }
       }
     } catch (err) {

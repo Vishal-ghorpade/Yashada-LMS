@@ -26,7 +26,7 @@ router.route('/:id')
 
 router.get('/:id/admin', protect, getQuizAdmin);
 router.post('/:id/submit', optionalProtect, submitQuizAttempt);
-router.post('/:id/check-attempt', checkQuizAttempt);
+router.post('/:id/check-attempt', optionalProtect, checkQuizAttempt);
 router.get('/:id/attempts', protect, getQuizAttempts);
 router.get('/:id/leaderboard', getQuizLeaderboard);
 

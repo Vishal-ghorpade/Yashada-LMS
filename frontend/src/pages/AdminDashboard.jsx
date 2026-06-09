@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Edit3, Eye, Link2, Download, Search, Filter,
   Clock, ClipboardCheck, BookOpen, Users, Settings, Activity,
   Check, Copy, PlusCircle, QrCode, ArrowLeft, RefreshCw, LogOut, Award, ArrowUpRight,
-  Play
+  Play, Building, CheckCircle
 } from 'lucide-react';
 import { fetchAPI } from '../utils/api';
 import { LoadingSpinner, SkeletonRow, PageLoader } from '../components/Loader';
@@ -17,7 +17,7 @@ import {
 
 const AdminDashboard = ({ admin, onShowToast }) => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('overview'); // overview, rubrics, quizzes, logs
+  const [activeTab, setActiveTab] = useState('overview'); // overview, rubrics, quizzes, logs, departments, drilldown
   const [loading, setLoading] = useState(true);
 
   // Dashboard Metrics
@@ -26,17 +26,40 @@ const AdminDashboard = ({ admin, onShowToast }) => {
     totalQuizzes: 0,
     totalFeedback: 0,
     totalParticipants: 0,
-    recentActivity: []
+    recentActivity: [],
+    completionRate: 0,
+    totalLearningHours: 0,
+    activeLearners: 0
   });
 
   // Data lists
   const [rubrics, setRubrics] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [videos, setVideos] = useState([]);
+
+  // Department CRUD / Assignment states
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [editingDeptId, setEditingDeptId] = useState(null);
+  const [deptName, setDeptName] = useState('');
+  const [deptDesc, setDeptDesc] = useState('');
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignDeptId, setAssignDeptId] = useState(null);
+  const [assignUserIds, setAssignUserIds] = useState([]);
+
+  // Drilldown states
+  const [selectedDeptId, setSelectedDeptId] = useState('');
+  const [selectedDeptDetails, setSelectedDeptDetails] = useState(null);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedUserDetails, setSelectedUserDetails] = useState(null);
 
   // Builders state (null when not editing/creating, otherwise holds builder data)
   const [rubricBuilder, setRubricBuilder] = useState(null);
   const [quizBuilder, setQuizBuilder] = useState(null);
+  const [courseBuilder, setCourseBuilder] = useState(null);
 
   // Response Viewer state (null if not viewing response details)
   const [viewingResponses, setViewingResponses] = useState(null); // { type: 'rubric' | 'quiz', item: Rubric/Quiz, data: [] }
@@ -46,31 +69,55 @@ const AdminDashboard = ({ admin, onShowToast }) => {
   const [shareData, setShareData] = useState(null); // { title, url }
 
   // Load baseline statistics
+  const [firstLoad, setFirstLoad] = useState(true);
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [rubricRes, quizRes, logsRes] = await Promise.all([
+      const [rubricRes, quizRes, logsRes, deptRes, userRes, courseRes, videoRes] = await Promise.all([
         fetchAPI('/rubrics'),
         fetchAPI('/quizzes'),
-        fetchAPI('/auth/logs')
+        fetchAPI('/auth/logs'),
+        fetchAPI('/departments'),
+        fetchAPI('/auth/users'),
+        fetchAPI('/courses'),
+        fetchAPI('/videos')
       ]);
 
-      if (rubricRes.success && quizRes.success) {
+      if (rubricRes.success && quizRes.success && courseRes.success) {
         setRubrics(rubricRes.rubrics);
         setQuizzes(quizRes.quizzes);
+        setCourses(courseRes.courses);
         setActivityLogs(logsRes.logs || []);
+        if (videoRes && videoRes.success) setVideos(videoRes.videos);
+
+        if (deptRes.success) setDepartments(deptRes.departments);
+        if (userRes.success) setAllUsers(userRes.users);
 
         // Compute metrics counts
-        // Rubrics responses count is fetched dynamically, let's set mock baseline counts if 0 or count actuals
         const totalRub = rubricRes.rubrics.length;
         const totalQ = quizRes.quizzes.length;
+
+        // Calculate advanced metrics
+        let totalHrs = 0;
+        let activeLearnerCount = 0;
+        if (userRes.success && userRes.users) {
+          userRes.users.forEach(u => {
+            totalHrs += (u.learningHours || 0);
+            if (u.xp > 0) activeLearnerCount++;
+          });
+        }
 
         setStats({
           totalRubrics: totalRub,
           totalQuizzes: totalQ,
-          totalFeedback: 0, // calculated below or populated dynamically
-          totalParticipants: 0,
-          recentActivity: logsRes.logs ? logsRes.logs.slice(0, 5) : []
+          totalFeedback: 0,
+          totalParticipants: userRes.users ? userRes.users.length : 0,
+          recentActivity: logsRes.logs ? logsRes.logs.slice(0, 5) : [],
+          completionRate: deptRes.departments && deptRes.departments.length > 0 
+            ? Math.round(deptRes.departments.reduce((acc, curr) => acc + (curr.avgProgress || 0), 0) / deptRes.departments.length)
+            : 0,
+          totalLearningHours: Math.round(totalHrs * 10) / 10,
+          activeLearners: activeLearnerCount
         });
       }
     } catch (err) {
@@ -78,6 +125,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
       onShowToast('Error refreshing panel statistics.', 'error');
     } finally {
       setLoading(false);
+      setFirstLoad(false);
     }
   };
 
@@ -203,6 +251,115 @@ const AdminDashboard = ({ admin, onShowToast }) => {
     });
   };
 
+  // DEPARTMENT & DRILLDOWN METHODS
+  const handleCreateOrUpdateDept = async (e) => {
+    e.preventDefault();
+    if (!deptName) return;
+    try {
+      let res;
+      if (editingDeptId) {
+        res = await fetchAPI(`/departments/${editingDeptId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ name: deptName, description: deptDesc })
+        });
+      } else {
+        res = await fetchAPI('/departments', {
+          method: 'POST',
+          body: JSON.stringify({ name: deptName, description: deptDesc })
+        });
+      }
+      if (res.success) {
+        onShowToast(editingDeptId ? 'Department updated.' : 'Department created.', 'success');
+        setShowDeptModal(false);
+        setEditingDeptId(null);
+        setDeptName('');
+        setDeptDesc('');
+        loadDashboardData();
+      }
+    } catch (err) {
+      onShowToast(err.message || 'Failed to save department.', 'error');
+    }
+  };
+
+  const handleDeleteDept = async (id) => {
+    if (window.confirm('Are you sure you want to delete this department? All member user department assignments will be cleared.')) {
+      try {
+        const res = await fetchAPI(`/departments/${id}`, { method: 'DELETE' });
+        if (res.success) {
+          onShowToast('Department deleted.', 'success');
+          loadDashboardData();
+        }
+      } catch (err) {
+        onShowToast(err.message || 'Failed to delete department.', 'error');
+      }
+    }
+  };
+
+  const handleOpenAssignModal = (dept) => {
+    setAssignDeptId(dept._id);
+    const assignedIds = allUsers.filter(u => u.department?._id === dept._id).map(u => u._id || u.id);
+    setAssignUserIds(assignedIds);
+    setShowAssignModal(true);
+  };
+
+  const handleSaveAssignments = async () => {
+    try {
+      const res = await fetchAPI(`/departments/${assignDeptId}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ userIds: assignUserIds })
+      });
+      if (res.success) {
+        onShowToast('Users assigned successfully.', 'success');
+        setShowAssignModal(false);
+        loadDashboardData();
+      }
+    } catch (err) {
+      onShowToast(err.message || 'Failed to assign users.', 'error');
+    }
+  };
+
+  const toggleAssignUser = (userId) => {
+    setAssignUserIds(prev => 
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const handleSelectDept = async (deptId) => {
+    setSelectedDeptId(deptId);
+    setSelectedUserId('');
+    setSelectedUserDetails(null);
+    if (!deptId) {
+      setSelectedDeptDetails(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetchAPI(`/departments/${deptId}`);
+      if (res.success) {
+        setSelectedDeptDetails(res);
+      }
+    } catch (err) {
+      onShowToast('Failed to load department details.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInspectUser = async (userId) => {
+    setSelectedUserId(userId);
+    setLoading(true);
+    try {
+      const res = await fetchAPI(`/departments/users/${userId}/progress`);
+      if (res.success) {
+        setSelectedUserDetails(res);
+      }
+    } catch (err) {
+      onShowToast('Failed to inspect user progress.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 4. SUB-SECTION: GRAPHICAL OVERVIEW PANEL
   const renderOverview = () => {
     // Generate clean mock trends if database is mostly empty
@@ -223,7 +380,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
               <ClipboardCheck className="h-6 w-6" />
             </div>
             <div>
-              <span className="text-xs text-slate-400 font-medium">Evaluation Rubrics</span>
+              <span className="text-xs text-slate-400 font-medium font-sans">Evaluation Rubrics</span>
               <p className="text-2xl font-bold text-slate-800 dark:text-white mt-0.5">{rubrics.length}</p>
             </div>
           </div>
@@ -233,18 +390,18 @@ const AdminDashboard = ({ admin, onShowToast }) => {
               <Award className="h-6 w-6" />
             </div>
             <div>
-              <span className="text-xs text-slate-400 font-medium">Active Quizzes</span>
+              <span className="text-xs text-slate-400 font-medium font-sans">Active Quizzes</span>
               <p className="text-2xl font-bold text-slate-800 dark:text-white mt-0.5">{quizzes.length}</p>
             </div>
           </div>
 
           <div className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-sm flex items-center space-x-4">
             <div className="p-3 bg-yashada-navy/10 text-yashada-navy dark:bg-yashada-gold/10 dark:text-yashada-gold rounded-xl shrink-0">
-              <Users className="h-6 w-6" />
+              <Clock className="h-6 w-6" />
             </div>
             <div>
-              <span className="text-xs text-slate-400 font-medium">Total Audited Events</span>
-              <p className="text-2xl font-bold text-slate-800 dark:text-white mt-0.5">{activityLogs.length}</p>
+              <span className="text-xs text-slate-400 font-medium font-sans">Total Study Hours</span>
+              <p className="text-2xl font-bold text-slate-800 dark:text-white mt-0.5">{stats.totalLearningHours} hrs</p>
             </div>
           </div>
 
@@ -253,11 +410,8 @@ const AdminDashboard = ({ admin, onShowToast }) => {
               <Activity className="h-6 w-6" />
             </div>
             <div>
-              <span className="text-xs text-slate-400 font-medium">Auditor Status</span>
-              <p className="text-sm font-bold text-emerald-500 mt-1 flex items-center space-x-1">
-                <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-ping"></span>
-                <span>SYSTEM ONLINE</span>
-              </p>
+              <span className="text-xs text-slate-400 font-medium font-sans">Avg Completion Rate</span>
+              <p className="text-2xl font-bold text-emerald-500 mt-0.5">{stats.completionRate}%</p>
             </div>
           </div>
         </div>
@@ -1084,6 +1238,535 @@ const AdminDashboard = ({ admin, onShowToast }) => {
     );
   };
 
+  // 8. SUB-SECTION: COURSES ADMIN VIEWER & BUILDER
+  const handleDeleteCourse = async (id) => {
+    if (window.confirm('WARNING: Deleting this course will remove all associated enrollment progress records. Continue?')) {
+      try {
+        const res = await fetchAPI(`/courses/${id}`, { method: 'DELETE' });
+        if (res.success) {
+          onShowToast('Course deleted successfully.', 'success');
+          loadDashboardData();
+        }
+      } catch (err) {
+        onShowToast(err.message || 'Failed to delete course.', 'error');
+      }
+    }
+  };
+
+  const handleOpenCourseBuilder = (editItem = null) => {
+    if (editItem) {
+      setCourseBuilder({
+        _id: editItem._id,
+        title: editItem.title,
+        description: editItem.description || '',
+        category: editItem.category,
+        thumbnailUrl: editItem.thumbnailUrl || '',
+        finalAssessment: editItem.finalAssessment?._id || editItem.finalAssessment || '',
+        modules: editItem.modules || []
+      });
+    } else {
+      setCourseBuilder({
+        title: '',
+        description: '',
+        category: '',
+        thumbnailUrl: '',
+        finalAssessment: '',
+        modules: [
+          {
+            title: 'Module 1: Getting Started',
+            description: 'Introduction and setup.',
+            items: []
+          }
+        ]
+      });
+    }
+  };
+
+  const handleSaveCourse = async (e) => {
+    e.preventDefault();
+    if (!courseBuilder.title || !courseBuilder.category) {
+      onShowToast('Course Title and Category are required.', 'error');
+      return;
+    }
+
+    try {
+      let data;
+      const payload = {
+        title: courseBuilder.title,
+        description: courseBuilder.description,
+        category: courseBuilder.category,
+        thumbnailUrl: courseBuilder.thumbnailUrl || undefined,
+        modules: courseBuilder.modules,
+        finalAssessment: courseBuilder.finalAssessment || undefined
+      };
+
+      if (courseBuilder._id) {
+        data = await fetchAPI(`/courses/${courseBuilder._id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+      } else {
+        data = await fetchAPI('/courses', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (data.success) {
+        onShowToast(courseBuilder._id ? 'Course updated successfully!' : 'New Course created successfully!', 'success');
+        setCourseBuilder(null);
+        loadDashboardData();
+      }
+    } catch (err) {
+      onShowToast(err.message || 'Failed to save course.', 'error');
+    }
+  };
+
+  const addBuilderModule = () => {
+    setCourseBuilder(prev => ({
+      ...prev,
+      modules: [
+        ...prev.modules,
+        {
+          title: `Module ${prev.modules.length + 1}: New Module`,
+          description: '',
+          items: []
+        }
+      ]
+    }));
+  };
+
+  const removeBuilderModule = (modIdx) => {
+    setCourseBuilder(prev => ({
+      ...prev,
+      modules: prev.modules.filter((_, idx) => idx !== modIdx)
+    }));
+  };
+
+  const updateBuilderModField = (modIdx, field, val) => {
+    setCourseBuilder(prev => {
+      const updated = [...prev.modules];
+      updated[modIdx] = {
+        ...updated[modIdx],
+        [field]: val
+      };
+      return { ...prev, modules: updated };
+    });
+  };
+
+  const addBuilderModItem = (modIdx, type, itemId, title) => {
+    if (!title || !itemId) return;
+    setCourseBuilder(prev => {
+      const updated = [...prev.modules];
+      updated[modIdx] = {
+        ...updated[modIdx],
+        items: [
+          ...updated[modIdx].items,
+          { type, itemId, title }
+        ]
+      };
+      return { ...prev, modules: updated };
+    });
+  };
+
+  const removeBuilderModItem = (modIdx, itemIdx) => {
+    setCourseBuilder(prev => {
+      const updated = [...prev.modules];
+      updated[modIdx] = {
+        ...updated[modIdx],
+        items: updated[modIdx].items.filter((_, idx) => idx !== itemIdx)
+      };
+      return { ...prev, modules: updated };
+    });
+  };
+
+  const generateTempObjectId = () => {
+    const chars = '0123456789abcdef';
+    let id = '';
+    for (let i = 0; i < 24; i++) {
+      id += chars[Math.floor(Math.random() * 16)];
+    }
+    return id;
+  };
+
+  const renderCoursesTab = () => {
+    return (
+      <div className="space-y-6 font-sans">
+        <div className="flex justify-between items-center">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white uppercase tracking-wider">Courses Repository</h2>
+          <button
+            onClick={() => handleOpenCourseBuilder()}
+            className="px-4 py-2 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold text-xs rounded-xl shadow-md flex items-center space-x-1.5 hover:opacity-95 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Create Course</span>
+          </button>
+        </div>
+
+        <div className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[700px]">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200/60 dark:border-slate-800 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-4">Course Details</th>
+                  <th className="px-6 py-4">Category</th>
+                  <th className="px-6 py-4">Modules Count</th>
+                  <th className="px-6 py-4">Final Assessment</th>
+                  <th className="px-6 py-4">Created By</th>
+                  <th className="px-6 py-4 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                {courses.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="text-center py-10 text-slate-400 text-xs">
+                      No courses found. Click "Create Course" to compile a new syllabus.
+                    </td>
+                  </tr>
+                ) : (
+                  courses.map((c) => (
+                    <tr key={c._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                      <td className="px-6 py-4 text-left">
+                        <div className="flex items-center space-x-3">
+                          {c.thumbnailUrl && (
+                            <img src={c.thumbnailUrl} alt="" className="w-10 h-7 object-cover rounded-md" />
+                          )}
+                          <div>
+                            <div className="font-semibold text-slate-900 dark:text-white">{c.title}</div>
+                            <div className="text-xs text-slate-400 line-clamp-1 mt-0.5">{c.description || 'No description.'}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-left">
+                        <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 rounded-full text-xs border border-blue-200/30">
+                          {c.category}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-left">{c.modules?.length || 0} Modules</td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-left">
+                        {c.finalAssessment?.title || (c.finalAssessment ? 'Quiz Assigned' : 'None')}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 dark:text-slate-400 text-left">
+                        {c.createdBy?.name || 'Academic System'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-center items-center space-x-2">
+                          <button
+                            onClick={() => navigate(`/courses/${c._id}`)}
+                            className="p-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-300 rounded-lg cursor-pointer"
+                            title="Preview Student View"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenCourseBuilder(c)}
+                            className="p-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-300 rounded-lg cursor-pointer"
+                            title="Edit curriculum syllabus"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCourse(c._id)}
+                            className="p-2 border border-red-200 dark:border-red-950/40 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-500 rounded-lg cursor-pointer"
+                            title="Delete Course"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const ModuleItemAdder = ({ onAddItem }) => {
+    const [itemType, setItemType] = useState('video');
+    const [selectedId, setSelectedId] = useState('');
+    const [customTitle, setCustomTitle] = useState('');
+
+    useEffect(() => {
+      if (itemType === 'video' && videos.length > 0) {
+        setSelectedId(videos[0]._id);
+      } else if (itemType === 'quiz' && quizzes.length > 0) {
+        setSelectedId(quizzes[0]._id);
+      } else {
+        setSelectedId('');
+      }
+    }, [itemType, videos, quizzes]);
+
+    const handleSubmitItem = (e) => {
+      e.preventDefault();
+      if (itemType === 'reflection') {
+        if (!customTitle.trim()) return;
+        onAddItem(itemType, generateTempObjectId(), customTitle);
+        setCustomTitle('');
+      } else {
+        if (!selectedId) return;
+        let matchedTitle = '';
+        if (itemType === 'video') {
+          matchedTitle = videos.find(v => v._id === selectedId)?.title || 'Video Lesson';
+        } else if (itemType === 'quiz') {
+          matchedTitle = quizzes.find(q => q._id === selectedId)?.title || 'Quiz Evaluation';
+        }
+        onAddItem(itemType, selectedId, matchedTitle);
+      }
+    };
+
+    return (
+      <div className="bg-slate-905/30 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-850 p-4 rounded-xl space-y-3">
+        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide block text-left">Add Item to Module</span>
+        <div className="flex flex-wrap gap-2.5 items-end">
+          <div className="space-y-1 text-left">
+            <label className="text-[9px] font-bold text-slate-500 uppercase">Type</label>
+            <select
+              value={itemType}
+              onChange={(e) => setItemType(e.target.value)}
+              className="px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:outline-none text-slate-800 dark:text-white cursor-pointer"
+            >
+              <option value="video">Video Lesson</option>
+              <option value="quiz">Timed Quiz</option>
+              <option value="reflection">Custom Reflection</option>
+            </select>
+          </div>
+
+          {itemType === 'reflection' ? (
+            <div className="flex-1 space-y-1 min-w-[150px] text-left">
+              <label className="text-[9px] font-bold text-slate-500 uppercase">Reflection Prompt Title</label>
+              <input
+                type="text"
+                placeholder="e.g. Reflection: Generative AI in administration"
+                value={customTitle}
+                onChange={(e) => setCustomTitle(e.target.value)}
+                className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:outline-none text-slate-800 dark:text-white"
+              />
+            </div>
+          ) : (
+            <div className="flex-1 space-y-1 min-w-[150px] text-left">
+              <label className="text-[9px] font-bold text-slate-500 uppercase">Select Resource</label>
+              <select
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value)}
+                className="w-full px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs focus:outline-none text-slate-800 dark:text-white cursor-pointer"
+              >
+                <option value="">Choose item...</option>
+                {itemType === 'video' ? (
+                  videos.map(v => <option key={v._id} value={v._id}>{v.title}</option>)
+                ) : (
+                  quizzes.map(q => <option key={q._id} value={q._id}>{q.title}</option>)
+                )}
+              </select>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSubmitItem}
+            className="px-3.5 py-1.5 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold text-xs rounded-lg hover:opacity-90 cursor-pointer"
+          >
+            Add Item
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCourseBuilder = () => {
+    return (
+      <div className="space-y-6 font-sans text-xs">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setCourseBuilder(null)}
+            className="p-2 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+          >
+            <ArrowLeft className="h-4.5 w-4.5" />
+          </button>
+          <div className="text-left">
+            <span className="text-[10px] font-bold text-yashada-gold uppercase tracking-wider">Course Syllabus Editor</span>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              {courseBuilder._id ? `Edit Course: "${courseBuilder.title}"` : 'Construct New Course'}
+            </h2>
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveCourse} className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          
+          {/* Metadata Panel */}
+          <div className="lg:col-span-1 bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 text-left">
+            <div className="space-y-1">
+              <label className="font-bold text-slate-500">Course Title *</label>
+              <input
+                type="text"
+                value={courseBuilder.title}
+                onChange={(e) => setCourseBuilder({ ...courseBuilder, title: e.target.value })}
+                placeholder="e.g. Generative AI Masterclass"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-500">Category Tag *</label>
+              <input
+                type="text"
+                value={courseBuilder.category}
+                onChange={(e) => setCourseBuilder({ ...courseBuilder, category: e.target.value })}
+                placeholder="e.g. Artificial Intelligence"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-500">Description</label>
+              <textarea
+                rows={3}
+                value={courseBuilder.description}
+                onChange={(e) => setCourseBuilder({ ...courseBuilder, description: e.target.value })}
+                placeholder="Brief summary of course content..."
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white"
+              ></textarea>
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-500">Thumbnail URL</label>
+              <input
+                type="text"
+                value={courseBuilder.thumbnailUrl}
+                onChange={(e) => setCourseBuilder({ ...courseBuilder, thumbnailUrl: e.target.value })}
+                placeholder="https://images.unsplash.com/..."
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-500">Final Assessment Quiz</label>
+              <select
+                value={courseBuilder.finalAssessment}
+                onChange={(e) => setCourseBuilder({ ...courseBuilder, finalAssessment: e.target.value })}
+                className="w-full px-2 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white cursor-pointer"
+              >
+                <option value="">No Final Assessment</option>
+                {quizzes.map(q => <option key={q._id} value={q._id}>{q.title}</option>)}
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold rounded-xl shadow cursor-pointer mt-2 hover:opacity-90 transition-opacity"
+            >
+              Save Course Syllabus
+            </button>
+          </div>
+
+          {/* Syllabus Modules builder */}
+          <div className="lg:col-span-3 space-y-6">
+            <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Syllabus Modules ({courseBuilder.modules.length})</h3>
+              <button
+                type="button"
+                onClick={addBuilderModule}
+                className="text-xs font-bold text-yashada-gold flex items-center space-x-1 hover:underline cursor-pointer"
+              >
+                <PlusCircle className="h-4 w-4" />
+                <span>Add Syllabus Module</span>
+              </button>
+            </div>
+
+            {courseBuilder.modules.length === 0 ? (
+              <div className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl p-10 text-center text-slate-400">
+                No modules defined. Click "Add Syllabus Module" to start structuring the course.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {courseBuilder.modules.map((mod, modIdx) => (
+                  <div
+                    key={modIdx}
+                    className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-5 relative text-left"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => removeBuilderModule(modIdx)}
+                      className="absolute top-6 right-6 p-1 text-slate-400 hover:text-red-500 cursor-pointer"
+                      title="Remove Module"
+                    >
+                      <Trash2 className="h-4.5 w-4.5" />
+                    </button>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-500">Module Title *</label>
+                        <input
+                          type="text"
+                          value={mod.title}
+                          onChange={(e) => updateBuilderModField(modIdx, 'title', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none font-bold text-slate-850 dark:text-white"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="font-bold text-slate-500">Module Description</label>
+                        <input
+                          type="text"
+                          value={mod.description || ''}
+                          onChange={(e) => updateBuilderModField(modIdx, 'description', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none text-slate-800 dark:text-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Items Checklist / List */}
+                    <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800/80">
+                      <span className="font-bold text-slate-450 uppercase tracking-wide block text-left">Module Syllabus Items</span>
+                      
+                      {mod.items.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 italic text-left">No syllabus items added to this module yet.</p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          {mod.items.map((item, itemIdx) => (
+                            <div 
+                              key={itemIdx} 
+                              className="px-3.5 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/25 flex justify-between items-center"
+                            >
+                              <div className="space-y-0.5 truncate pr-2 text-left">
+                                <span className="font-bold text-slate-800 dark:text-slate-200 block truncate">{item.title}</span>
+                                <span className="text-[9px] uppercase font-bold text-yashada-gold font-mono">{item.type}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeBuilderModItem(modIdx, itemIdx)}
+                                className="p-1.5 text-slate-400 hover:text-red-500 cursor-pointer"
+                                title="Remove item"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add Item form */}
+                      <ModuleItemAdder
+                        onAddItem={(type, itemId, title) => addBuilderModItem(modIdx, type, itemId, title)}
+                      />
+                    </div>
+
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+        </form>
+      </div>
+    );
+  };
+
   // 9. SUB-SECTION: RESPONSES / ATTEMPTS LIST & ANALYTICS VIEWER
   const renderResponsesViewer = () => {
     const isRubric = viewingResponses.type === 'rubric';
@@ -1313,6 +1996,426 @@ const AdminDashboard = ({ admin, onShowToast }) => {
     );
   };
 
+  // 11. DEPARTMENTS CRUD PANEL
+  const renderDepartmentsTab = () => {
+    return (
+      <div className="space-y-6 font-sans">
+        <div className="flex justify-between items-center">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white uppercase tracking-wider font-serif">Department Matrix</h2>
+          <button
+            onClick={() => {
+              setEditingDeptId(null);
+              setDeptName('');
+              setDeptDesc('');
+              setShowDeptModal(true);
+            }}
+            className="px-4 py-2.5 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold text-xs rounded-xl shadow-md flex items-center space-x-1.5 hover:opacity-95 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Create Department</span>
+          </button>
+        </div>
+
+        <div className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200/60 dark:border-slate-800 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="px-6 py-4">Department Name</th>
+                  <th className="px-6 py-4">Description</th>
+                  <th className="px-6 py-4 text-center">User Count</th>
+                  <th className="px-6 py-4 text-center">Avg Course Progress</th>
+                  <th className="px-6 py-4 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                {departments.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="text-center py-10 text-slate-400 text-xs">
+                      No departments configured yet. Click "Create Department" to start.
+                    </td>
+                  </tr>
+                ) : (
+                  departments.map((dept) => (
+                    <tr key={dept._id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                      <td className="px-6 py-4 font-semibold text-slate-900 dark:text-white">
+                        {dept.name}
+                      </td>
+                      <td className="px-6 py-4 text-slate-550 dark:text-slate-400 text-xs max-w-xs truncate">
+                        {dept.description || 'No description.'}
+                      </td>
+                      <td className="px-6 py-4 text-center text-slate-500 dark:text-slate-450 font-bold">
+                        {dept.userCount}
+                      </td>
+                      <td className="px-6 py-4 text-center font-mono font-bold text-yashada-gold">
+                        {dept.avgProgress}%
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-center items-center space-x-2">
+                          <button
+                            onClick={() => handleOpenAssignModal(dept)}
+                            className="px-2.5 py-1.5 bg-yashada-navy/10 dark:bg-white/5 border border-slate-200 dark:border-slate-800 text-slate-650 dark:text-slate-300 rounded-lg text-[10px] font-bold hover:bg-yashada-navy/15 cursor-pointer"
+                            title="Assign users to department"
+                          >
+                            Assign Users
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingDeptId(dept._id);
+                              setDeptName(dept.name);
+                              setDeptDesc(dept.description || '');
+                              setShowDeptModal(true);
+                            }}
+                            className="p-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-500 rounded-lg cursor-pointer"
+                            title="Edit details"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDept(dept._id)}
+                            className="p-2 border border-red-200 dark:border-red-950/40 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-500 rounded-lg cursor-pointer"
+                            title="Delete Department"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* DEPARTMENT CREATE/EDIT MODAL */}
+        {showDeptModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="w-full max-w-md bg-[#140D24] border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+              <h3 className="text-base font-serif font-bold text-white">
+                {editingDeptId ? 'Update Department Details' : 'Configure New Department'}
+              </h3>
+              <form onSubmit={handleCreateOrUpdateDept} className="space-y-4 text-xs">
+                <div className="space-y-1 text-left">
+                  <label className="font-bold text-slate-400">Department Name *</label>
+                  <input
+                    type="text"
+                    value={deptName}
+                    onChange={(e) => setDeptName(e.target.value)}
+                    placeholder="e.g. Finance, Public Health"
+                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none"
+                    required
+                  />
+                </div>
+                <div className="space-y-1 text-left">
+                  <label className="font-bold text-slate-400">Description</label>
+                  <textarea
+                    rows={3}
+                    value={deptDesc}
+                    onChange={(e) => setDeptDesc(e.target.value)}
+                    placeholder="Describe department responsibilities..."
+                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none"
+                  ></textarea>
+                </div>
+                <div className="flex justify-end gap-3.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeptModal(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-yashada-gold text-yashada-navy rounded-xl font-bold hover:bg-yashada-gold-light cursor-pointer"
+                  >
+                    {editingDeptId ? 'Save Changes' : 'Create Department'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ASSIGN USERS MODAL */}
+        {showAssignModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="w-full max-w-lg bg-[#140D24] border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col justify-between">
+              <div className="space-y-1 border-b border-slate-800 pb-3">
+                <h3 className="text-base font-serif font-bold text-white">
+                  Assign Users to Department
+                </h3>
+                <p className="text-[10px] text-slate-400">
+                  Select the users to bind to this department. Unchecked users will remain in their existing configs.
+                </p>
+              </div>
+
+              <div className="overflow-y-auto my-3 space-y-2 flex-1 pr-1 custom-scrollbar text-xs">
+                {allUsers.length === 0 ? (
+                  <p className="text-center py-6 text-slate-500">No users found in database.</p>
+                ) : (
+                  allUsers.map((u) => {
+                    const isChecked = assignUserIds.includes(u._id || u.id);
+                    return (
+                      <button
+                        key={u._id || u.id}
+                        type="button"
+                        onClick={() => toggleAssignUser(u._id || u.id)}
+                        className={`w-full p-3 text-left border rounded-xl flex items-center justify-between transition-all cursor-pointer ${
+                          isChecked 
+                            ? 'bg-yashada-gold/10 border-yashada-gold text-yashada-gold-light'
+                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-750'
+                        }`}
+                      >
+                        <div className="space-y-0.5">
+                          <span className="font-bold block">{u.name}</span>
+                          <span className="text-[10px] text-slate-450 block">
+                            {u.designation || 'No Designation'} &bull; {u.email}
+                          </span>
+                        </div>
+                        <div className={`w-4.5 h-4.5 border rounded-md flex items-center justify-center ${
+                          isChecked ? 'bg-yashada-gold border-yashada-gold text-yashada-navy' : 'border-slate-600'
+                        }`}>
+                          {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3.5 border-t border-slate-800 pt-3.5">
+                <button
+                  type="button"
+                  onClick={() => setShowAssignModal(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAssignments}
+                  className="px-4 py-2 bg-yashada-gold text-yashada-navy rounded-xl font-bold hover:bg-yashada-gold-light cursor-pointer"
+                >
+                  Save Assignments
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 12. DEPARTMENT DRILLDOWN ANALYTICS
+  const renderDrilldownTab = () => {
+    const activeMembers = selectedDeptDetails?.members || [];
+    const inspectedEnrollments = selectedUserDetails?.enrollments || [];
+
+    return (
+      <div className="space-y-6 font-sans">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-slate-150 dark:border-slate-800 pb-4">
+          <div className="space-y-1 text-left">
+            <h2 className="text-base font-bold text-slate-900 dark:text-white uppercase tracking-wider font-serif">
+              Department Drilldown Analytics
+            </h2>
+            <p className="text-xs text-slate-400">
+              Drill down by Department &rarr; User &rarr; Course to inspect itemized training progress.
+            </p>
+          </div>
+
+          <div className="w-full sm:w-64">
+            <select
+              value={selectedDeptId}
+              onChange={(e) => handleSelectDept(e.target.value)}
+              className="w-full px-4 py-3 bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-white font-sans text-xs focus:outline-none focus:border-yashada-gold cursor-pointer"
+            >
+              <option value="">Select Department</option>
+              {departments.map((d) => (
+                <option key={d._id} value={d._id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {selectedDeptDetails ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            
+            {/* Department stats summary & member list */}
+            <div className="lg:col-span-1 space-y-6">
+              {/* Stats card */}
+              <div className="bg-[#140D24] border border-yashada-gold/30 rounded-3xl p-5 shadow space-y-4">
+                <span className="text-[10px] font-bold text-yashada-gold uppercase tracking-wider block font-sans text-left">
+                  {selectedDeptDetails.department?.name} Overview
+                </span>
+                
+                <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
+                  <div className="bg-white/5 p-3 rounded-xl">
+                    <span className="text-slate-450 block text-[9px] uppercase font-bold">Completion</span>
+                    <span className="text-base font-extrabold text-white">{selectedDeptDetails.stats?.completionRate}%</span>
+                  </div>
+                  <div className="bg-white/5 p-3 rounded-xl">
+                    <span className="text-slate-450 block text-[9px] uppercase font-bold">Study Hours</span>
+                    <span className="text-base font-extrabold text-white">{selectedDeptDetails.stats?.totalLearningHours} hrs</span>
+                  </div>
+                  <div className="bg-white/5 p-3 rounded-xl">
+                    <span className="text-slate-450 block text-[9px] uppercase font-bold">Active Users</span>
+                    <span className="text-base font-extrabold text-emerald-400">{selectedDeptDetails.stats?.activeLearners}</span>
+                  </div>
+                  <div className="bg-white/5 p-3 rounded-xl">
+                    <span className="text-slate-450 block text-[9px] uppercase font-bold">Quiz Average</span>
+                    <span className="text-base font-extrabold text-yashada-gold">{selectedDeptDetails.stats?.avgQuizScore}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Members table */}
+              <div className="bg-white dark:bg-[#140D24] border border-slate-205 dark:border-slate-800 rounded-3xl overflow-hidden shadow-sm">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 font-serif font-bold text-xs uppercase tracking-wider text-slate-800 dark:text-white text-left">
+                  Member Profiles ({activeMembers.length})
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto custom-scrollbar">
+                  {activeMembers.length === 0 ? (
+                    <p className="text-center py-6 text-xs text-slate-450">No members assigned to this department.</p>
+                  ) : (
+                    activeMembers.map((m) => (
+                      <div 
+                        key={m._id} 
+                        className={`p-4 flex justify-between items-center transition-colors ${
+                          selectedUserId === m._id ? 'bg-yashada-gold/15' : 'hover:bg-slate-50/50 dark:hover:bg-slate-900/30'
+                        }`}
+                      >
+                        <div className="space-y-0.5 text-left text-xs">
+                          <h4 className="font-bold text-slate-800 dark:text-white">{m.name}</h4>
+                          <p className="text-[10px] text-slate-450">{m.designation || 'Officer Trainee'}</p>
+                          <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-slate-350 font-mono">
+                            {m.xp} XP &bull; {m.learningHours || 0} hrs
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleInspectUser(m._id)}
+                          className="px-2.5 py-1.5 bg-yashada-gold hover:bg-yashada-gold-light text-yashada-navy text-[10px] font-bold rounded-lg cursor-pointer"
+                        >
+                          Inspect
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Inspect User Course details */}
+            <div className="lg:col-span-2 space-y-6">
+              {selectedUserDetails ? (
+                <div className="bg-[#140D24] border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6 text-left">
+                  <div className="border-b border-slate-800 pb-4 space-y-1">
+                    <span className="text-[9px] font-bold text-yashada-gold uppercase tracking-wider block">
+                      Inspecting Learner Progress
+                    </span>
+                    <h3 className="text-lg font-serif font-bold text-white">
+                      {selectedUserDetails.user?.name}
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Designation: {selectedUserDetails.user?.designation || 'Learner Officer'} &bull; Email: {selectedUserDetails.user?.email}
+                    </p>
+                  </div>
+
+                  {inspectedEnrollments.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500 text-xs">
+                      This user is not enrolled in any training courses.
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <h4 className="text-xs font-bold text-yashada-gold uppercase tracking-widest text-left">Enrolled Courses &amp; Modules</h4>
+                      
+                      <div className="space-y-4">
+                        {inspectedEnrollments.map((enroll) => {
+                          const c = enroll.course;
+                          if (!c) return null;
+                          return (
+                            <div key={enroll._id} className="bg-white/5 border border-slate-800 rounded-2xl p-5 space-y-4">
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-1 text-left">
+                                  <h5 className="text-xs font-bold text-white font-serif">{c.title}</h5>
+                                  <p className="text-[10px] text-slate-400">Completed items: {enroll.completedItems?.length || 0}</p>
+                                </div>
+                                <div className="text-right">
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                    enroll.completed 
+                                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40' 
+                                      : 'bg-amber-950/40 text-amber-400 border border-amber-900/40'
+                                  }`}>
+                                    {enroll.completed ? 'Graduated' : 'In Progress'}
+                                  </span>
+                                  <p className="text-xs font-extrabold text-white font-mono mt-1">{enroll.progress}%</p>
+                                </div>
+                              </div>
+
+                              {/* Progress bar */}
+                              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-yashada-gold"
+                                  style={{ width: `${enroll.progress}%` }}
+                                />
+                              </div>
+
+                              {/* Completed Items Checklist */}
+                              <div className="pt-2.5 border-t border-slate-800 space-y-2">
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block text-left">Course Items Checklist</span>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                                  {c.modules?.flatMap(m => m.items || []).map((item, idx) => {
+                                    const isItemCompleted = enroll.completedItems?.includes(`${item._id}` || `${item.itemId}`);
+                                    return (
+                                      <div 
+                                        key={idx} 
+                                        className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                                          isItemCompleted 
+                                            ? 'bg-emerald-950/20 border-emerald-900/30 text-emerald-350 font-bold' 
+                                            : 'bg-slate-900 border-slate-850 text-slate-400'
+                                        }`}
+                                      >
+                                        <div className="space-y-0.5 text-left truncate pr-2">
+                                          <span className="font-bold block truncate">{item.title}</span>
+                                          <span className="text-[9px] uppercase text-slate-500 font-mono">{item.type}</span>
+                                        </div>
+                                        {isItemCompleted ? (
+                                          <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+                                        ) : (
+                                          <div className="w-4 h-4 border border-slate-650 rounded-full shrink-0" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              ) : (
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-12 text-center text-slate-400 text-xs">
+                  Select a member trainee from the left side panel to inspect itemized progress.
+                </div>
+              )}
+            </div>
+
+          </div>
+        ) : (
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-12 text-center text-slate-400 text-xs">
+            Please select a department above to retrieve trainee learning metrics.
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col md:flex-row min-h-[85vh] font-sans">
 
@@ -1333,9 +2436,10 @@ const AdminDashboard = ({ admin, onShowToast }) => {
                 setActiveTab('overview');
                 setRubricBuilder(null);
                 setQuizBuilder(null);
+                setCourseBuilder(null);
                 setViewingResponses(null);
               }}
-              className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'overview' && !rubricBuilder && !quizBuilder && !viewingResponses
+              className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'overview' && !rubricBuilder && !quizBuilder && !courseBuilder && !viewingResponses
                   ? 'bg-yashada-gold text-yashada-navy font-bold'
                   : 'hover:bg-white/5 hover:text-white'
                 }`}
@@ -1346,9 +2450,27 @@ const AdminDashboard = ({ admin, onShowToast }) => {
 
             <button
               onClick={() => {
+                setActiveTab('courses');
+                setRubricBuilder(null);
+                setQuizBuilder(null);
+                setCourseBuilder(null);
+                setViewingResponses(null);
+              }}
+              className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'courses' || courseBuilder !== null
+                  ? 'bg-yashada-gold text-yashada-navy font-bold'
+                  : 'hover:bg-white/5 hover:text-white'
+                }`}
+            >
+              <BookOpen className="h-4.5 w-4.5" />
+              <span>Courses Syllabus</span>
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveTab('rubrics');
                 setRubricBuilder(null);
                 setQuizBuilder(null);
+                setCourseBuilder(null);
                 setViewingResponses(null);
               }}
               className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'rubrics' || rubricBuilder?.parameters !== undefined || viewingResponses?.type === 'rubric'
@@ -1365,6 +2487,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
                 setActiveTab('quizzes');
                 setRubricBuilder(null);
                 setQuizBuilder(null);
+                setCourseBuilder(null);
                 setViewingResponses(null);
               }}
               className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'quizzes' || quizBuilder?.questions !== undefined || viewingResponses?.type === 'quiz'
@@ -1372,7 +2495,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
                   : 'hover:bg-white/5 hover:text-white'
                 }`}
             >
-              <BookOpen className="h-4.5 w-4.5" />
+              <Award className="h-4.5 w-4.5" />
               <span>Quizzes Manager</span>
             </button>
 
@@ -1381,6 +2504,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
                 setActiveTab('videos');
                 setRubricBuilder(null);
                 setQuizBuilder(null);
+                setCourseBuilder(null);
                 setViewingResponses(null);
               }}
               className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'videos'
@@ -1394,9 +2518,44 @@ const AdminDashboard = ({ admin, onShowToast }) => {
 
             <button
               onClick={() => {
+                setActiveTab('departments');
+                setRubricBuilder(null);
+                setQuizBuilder(null);
+                setCourseBuilder(null);
+                setViewingResponses(null);
+              }}
+              className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'departments'
+                  ? 'bg-yashada-gold text-yashada-navy font-bold'
+                  : 'hover:bg-white/5 hover:text-white'
+                }`}
+            >
+              <Building className="h-4.5 w-4.5" />
+              <span>Departments Matrix</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('drilldown');
+                setRubricBuilder(null);
+                setQuizBuilder(null);
+                setCourseBuilder(null);
+                setViewingResponses(null);
+              }}
+              className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'drilldown'
+                  ? 'bg-yashada-gold text-yashada-navy font-bold'
+                  : 'hover:bg-white/5 hover:text-white'
+                }`}
+            >
+              <Users className="h-4.5 w-4.5" />
+              <span>Department Drilldown</span>
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveTab('logs');
                 setRubricBuilder(null);
                 setQuizBuilder(null);
+                setCourseBuilder(null);
                 setViewingResponses(null);
               }}
               className={`w-full text-left px-4 py-2.5 rounded-xl transition-all flex items-center space-x-2.5 ${activeTab === 'logs'
@@ -1404,7 +2563,7 @@ const AdminDashboard = ({ admin, onShowToast }) => {
                   : 'hover:bg-white/5 hover:text-white'
                 }`}
             >
-              <Users className="h-4.5 w-4.5" />
+              <Activity className="h-4.5 w-4.5" />
               <span>Audit System Logs</span>
             </button>
           </nav>
@@ -1420,20 +2579,25 @@ const AdminDashboard = ({ admin, onShowToast }) => {
 
       {/* Main Console Workspace */}
       <main className="flex-1 bg-slate-50 dark:bg-[#0B0616] p-6 sm:p-8 overflow-y-auto">
-        {loading ? (
+        {loading && firstLoad ? (
           <PageLoader />
         ) : rubricBuilder ? (
           renderRubricBuilder()
         ) : quizBuilder ? (
           renderQuizBuilder()
+        ) : courseBuilder ? (
+          renderCourseBuilder()
         ) : viewingResponses ? (
           renderResponsesViewer()
         ) : (
           <>
             {activeTab === 'overview' && renderOverview()}
+            {activeTab === 'courses' && renderCoursesTab()}
             {activeTab === 'rubrics' && renderRubricsTab()}
             {activeTab === 'quizzes' && renderQuizzesTab()}
             {activeTab === 'videos' && <VideosManager admin={admin} onShowToast={onShowToast} />}
+            {activeTab === 'departments' && renderDepartmentsTab()}
+            {activeTab === 'drilldown' && renderDrilldownTab()}
             {activeTab === 'logs' && renderAuditLogsTab()}
           </>
         )}

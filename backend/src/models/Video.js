@@ -7,7 +7,7 @@ const interactionSchema = new mongoose.Schema({
   },
   questionType: {
     type: String,
-    enum: ['MCQ', 'TrueFalse', 'FillBlank'],
+    enum: ['MCQ', 'TrueFalse', 'FillBlank', 'Reflection', 'Poll'],
     required: true
   },
   questionText: {
@@ -18,15 +18,14 @@ const interactionSchema = new mongoose.Schema({
     type: [String],
     validate: {
       validator: function(v) {
-        // True/False must have 2 options, MCQ must have at least 2
-        return v.length >= 2;
+        if (this.questionType === 'Reflection') return true;
+        return v && v.length >= 2;
       },
-      message: 'A question must have at least 2 options'
+      message: 'A choice-based question must have at least 2 options'
     }
   },
   correctAnswerIndex: {
     type: Number,
-    required: [true, 'Please specify the correct answer index'],
     min: 0
   },
   explanation: {

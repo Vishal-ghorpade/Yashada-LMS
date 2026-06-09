@@ -145,7 +145,19 @@ export const submitRubricResponse = async (req, res, next) => {
       throw new Error('Rubric not found');
     }
 
-    if (!respondentName || !respondentBranch || !rollNumber || !parameterRatings || parameterRatings.length === 0) {
+    let name = respondentName;
+    let branch = respondentBranch;
+    let roll = rollNumber;
+    let email = respondentEmail;
+
+    if (req.user) {
+      name = req.user.name;
+      branch = req.user.branch || respondentBranch;
+      roll = req.user.rollNumber || rollNumber;
+      email = req.user.email;
+    }
+
+    if (!name || !branch || !roll || !parameterRatings || parameterRatings.length === 0) {
       res.status(400);
       throw new Error('Please fill all required candidate fields, roll number, and ratings');
     }
@@ -181,10 +193,10 @@ export const submitRubricResponse = async (req, res, next) => {
     const response = await FeedbackResponse.create({
       rubricId,
       user: req.user ? req.user._id : null,
-      respondentName,
-      respondentBranch,
-      rollNumber,
-      respondentEmail,
+      respondentName: name,
+      respondentBranch: branch,
+      rollNumber: roll,
+      respondentEmail: email,
       parameterRatings: processedRatings,
       feedbackText,
       totalScore,
@@ -312,14 +324,21 @@ export const getRubricAnalytics = async (req, res, next) => {
 export const checkFeedbackAttempt = async (req, res, next) => {
   try {
     const { rollNumber } = req.body;
-    if (!rollNumber) {
+    let existing = null;
+
+    if (req.user) {
+      existing = await FeedbackResponse.findOne({ rubricId: req.params.id, user: req.user._id });
+    } else if (rollNumber) {
+      existing = await FeedbackResponse.findOne({ rubricId: req.params.id, rollNumber });
+    } else {
       res.status(400);
-      throw new Error('Roll number is required');
+      throw new Error('Roll number or authenticated session is required');
     }
-    const existing = await FeedbackResponse.findOne({ rubricId: req.params.id, rollNumber });
+
     res.status(200).json({
       success: true,
-      exists: !!existing
+      exists: !!existing,
+      response: existing
     });
   } catch (error) {
     next(error);

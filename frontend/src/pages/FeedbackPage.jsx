@@ -20,12 +20,17 @@ const FeedbackPage = ({ onShowToast }) => {
 
   const [detailsSubmitted, setDetailsSubmitted] = useState(false);
   const [checkingAttempt, setCheckingAttempt] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(false);
 
   // Ratings: Map of parameterName -> level (1-4)
   const [ratings, setRatings] = useState({});
   const [feedback, setFeedback] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [submissionResult, setSubmissionResult] = useState(null);
+
+  // Authenticated state
+  const userToken = localStorage.getItem('yashada_admin_token');
+  const userInfo = JSON.parse(localStorage.getItem('yashada_admin_info')) || null;
 
   useEffect(() => {
     const loadRubric = async () => {
@@ -39,6 +44,86 @@ const FeedbackPage = ({ onShowToast }) => {
             initialRatings[p.name] = null;
           });
           setRatings(initialRatings);
+
+          // SSO check if logged in
+          if (userToken && userInfo) {
+            setName(userInfo.name || '');
+            setBranch(userInfo.branch || '');
+            setRollNumber(userInfo.rollNumber || '');
+            setEmail(userInfo.email || '');
+
+            try {
+              const attemptData = await fetchAPI(`/rubrics/${rubricId}/check-attempt`, {
+                method: 'POST',
+                body: JSON.stringify({ rollNumber: userInfo.rollNumber || '' })
+              });
+
+              if (attemptData.success) {
+                if (attemptData.exists) {
+                  // User already submitted, display previous rating details in read-only mode
+                  const prevResponse = attemptData.response;
+                  if (prevResponse && prevResponse.parameterRatings) {
+                    const prevRatings = {};
+                    prevResponse.parameterRatings.forEach(pr => {
+                      prevRatings[pr.parameterName] = pr.rating;
+                    });
+                    setRatings(prevRatings);
+                    setFeedback(prevResponse.feedbackText || '');
+                    setSubmissionResult(prevResponse);
+                    setIsReadOnly(true);
+                    setDetailsSubmitted(true);
+                  }
+                } else {
+                  // Bypass details entry form
+                  setDetailsSubmitted(true);
+                }
+              }
+            } catch (attemptErr) {
+              console.error("Failed to check duplicate feedback attempt:", attemptErr);
+            }
+          } else {
+            // Guest cache check
+            const guestName = localStorage.getItem('yashada_guest_name');
+            const guestBranch = localStorage.getItem('yashada_guest_branch');
+            const guestRollNumber = localStorage.getItem('yashada_guest_rollNumber');
+            const guestEmail = localStorage.getItem('yashada_guest_email');
+
+            if (guestName && guestBranch && guestRollNumber) {
+              setName(guestName);
+              setBranch(guestBranch);
+              setRollNumber(guestRollNumber);
+              setEmail(guestEmail || '');
+
+              try {
+                const attemptData = await fetchAPI(`/rubrics/${rubricId}/check-attempt`, {
+                  method: 'POST',
+                  body: JSON.stringify({ rollNumber: guestRollNumber })
+                });
+
+                if (attemptData.success) {
+                  if (attemptData.exists) {
+                    const prevResponse = attemptData.response;
+                    if (prevResponse && prevResponse.parameterRatings) {
+                      const prevRatings = {};
+                      prevResponse.parameterRatings.forEach(pr => {
+                        prevRatings[pr.parameterName] = pr.rating;
+                      });
+                      setRatings(prevRatings);
+                      setFeedback(prevResponse.feedbackText || '');
+                      setSubmissionResult(prevResponse);
+                      setIsReadOnly(true);
+                      setDetailsSubmitted(true);
+                    }
+                  } else {
+                    // Bypass details entry form
+                    setDetailsSubmitted(true);
+                  }
+                }
+              } catch (attemptErr) {
+                console.error("Failed to check duplicate guest feedback attempt:", attemptErr);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error(err);
@@ -65,6 +150,7 @@ const FeedbackPage = ({ onShowToast }) => {
   const maxPossibleScore = totalParams * rubric.scaleMax;
 
   const selectRating = (paramName, level) => {
+    if (isReadOnly) return;
     setRatings(prev => ({
       ...prev,
       [paramName]: level
@@ -124,6 +210,11 @@ const FeedbackPage = ({ onShowToast }) => {
         if (data.exists) {
           onShowToast('You have already submitted feedback for this assessment (One attempt restricted).', 'error');
         } else {
+          // Store guest details
+          localStorage.setItem('yashada_guest_name', name);
+          localStorage.setItem('yashada_guest_branch', branch);
+          localStorage.setItem('yashada_guest_rollNumber', rollNumber);
+          localStorage.setItem('yashada_guest_email', email || '');
           setDetailsSubmitted(true);
         }
       }
@@ -317,13 +408,23 @@ const FeedbackPage = ({ onShowToast }) => {
     <div className="max-w-7xl mx-auto px-4 py-8 font-sans space-y-8 animate-fade-in">
       {/* Top Bar Navigation */}
       <div className="flex justify-between items-center">
-        <button
-          onClick={() => setDetailsSubmitted(false)}
-          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          <span>Edit Details</span>
-        </button>
+        {!isReadOnly ? (
+          <button
+            onClick={() => setDetailsSubmitted(false)}
+            className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Edit Details</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back to Dashboard</span>
+          </button>
+        )}
         
         <div className="flex items-center space-x-4">
           <div className="hidden sm:flex flex-col items-end text-xs">
@@ -341,10 +442,17 @@ const FeedbackPage = ({ onShowToast }) => {
 
       {/* Header Banner */}
       <header className="bg-white dark:bg-[#140D24] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-sm space-y-4">
-        <div className="flex items-center space-x-2 text-xs font-semibold text-yashada-gold uppercase tracking-wider">
-          <ClipboardCheck className="h-4 w-4" />
-          <span>Academic Rubric Form</span>
-        </div>
+        {isReadOnly ? (
+          <div className="flex items-center space-x-2 text-xs font-semibold text-yashada-gold uppercase tracking-wider bg-yashada-gold/15 border border-yashada-gold/30 rounded-xl px-4 py-2 w-fit">
+            <ShieldAlert className="h-4 w-4" />
+            <span>Read-Only Archive Copy (Already Submitted)</span>
+          </div>
+        ) : (
+          <div className="flex items-center space-x-2 text-xs font-semibold text-yashada-gold uppercase tracking-wider">
+            <ClipboardCheck className="h-4 w-4" />
+            <span>Academic Rubric Form</span>
+          </div>
+        )}
         <h1 className="text-2xl sm:text-3xl font-serif font-bold text-yashada-navy dark:text-white">{rubric.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-4xl">
           {rubric.description || 'Fill in the respondent parameters below and select the appropriate performance grade.'}
@@ -444,7 +552,7 @@ const FeedbackPage = ({ onShowToast }) => {
                           <td 
                             key={levelNum}
                             onClick={() => selectRating(param.name, levelNum)}
-                            className={`p-3 align-top text-xs border-l border-slate-100 dark:border-slate-800 ${getLevelStyle(levelNum, isSelected)}`}
+                            className={`p-3 align-top text-xs border-l border-slate-100 dark:border-slate-800 ${getLevelStyle(levelNum, isSelected)} ${isReadOnly ? '' : 'cursor-pointer'}`}
                           >
                             <div className="flex flex-col h-full justify-between space-y-3">
                               <p className="leading-relaxed opacity-90">{levelData?.description}</p>
@@ -473,26 +581,39 @@ const FeedbackPage = ({ onShowToast }) => {
               rows={4}
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
+              disabled={isReadOnly}
               placeholder="Provide constructive feedback, suggestions for development, or observations..."
-              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:border-yashada-gold transition-colors text-slate-800 dark:text-white"
+              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:border-yashada-gold transition-colors text-slate-800 dark:text-white disabled:opacity-75 disabled:cursor-not-allowed"
             ></textarea>
           </div>
 
           {/* Submit Actions */}
           <div className="flex flex-col sm:flex-row justify-end items-center gap-4 pt-2">
-            {paramsRated < totalParams && (
-              <span className="text-xs text-amber-600 dark:text-amber-400 font-medium font-sans">
-                Please score all parameters ({paramsRated}/{totalParams} done) to enable submission.
-              </span>
+            {isReadOnly ? (
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="w-full sm:w-auto px-8 py-3 bg-yashada-gold text-yashada-navy font-bold rounded-xl shadow-md hover:opacity-95 transition-all flex items-center justify-center space-x-2 cursor-pointer text-xs"
+              >
+                <span>Return to Dashboard</span>
+              </button>
+            ) : (
+              <>
+                {paramsRated < totalParams && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400 font-medium font-sans">
+                    Please score all parameters ({paramsRated}/{totalParams} done) to enable submission.
+                  </span>
+                )}
+                <button
+                  type="submit"
+                  disabled={paramsRated < totalParams}
+                  className="w-full sm:w-auto px-8 py-3 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold rounded-xl shadow-md hover:opacity-95 disabled:opacity-40 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <Send className="h-4.5 w-4.5" />
+                  <span>Submit Evaluation</span>
+                </button>
+              </>
             )}
-            <button
-              type="submit"
-              disabled={paramsRated < totalParams}
-              className="w-full sm:w-auto px-8 py-3 bg-yashada-navy dark:bg-yashada-gold text-yashada-gold dark:text-yashada-navy font-bold rounded-xl shadow-md hover:opacity-95 disabled:opacity-40 transition-all flex items-center justify-center space-x-2"
-            >
-              <Send className="h-4.5 w-4.5" />
-              <span>Submit Evaluation</span>
-            </button>
           </div>
 
         </section>
